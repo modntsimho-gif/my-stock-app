@@ -59,7 +59,7 @@ export default function Home() {
       {/* 헤더 영역 */}
       <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 p-4 shadow-lg">
         <h1 className="text-xl md:text-2xl font-bold text-green-400 mb-3 flex items-center gap-2">
-          <span>📈</span> 퀀트 분석기 <span className="text-xs text-gray-500 font-normal mt-1">Vercel Ed.</span>
+          <span>📈</span> 가자 [반포자이]로 <span className="text-xs text-gray-500 font-normal mt-1">원베일리도 낫베드</span>
         </h1>
 
         {/* 컨트롤 패널 */}
