@@ -36,7 +36,6 @@ export default function Home() {
               setLogs((prev) => [...prev, `🚀 분석 시작... 총 ${data.total}개 종목`]);
             } else if (data.type === "progress") {
               setProgress({ current: data.current, total: data.total });
-              // 너무 빠르게 지나가므로 로그에는 가끔만 추가하거나 생략 가능
             } else if (data.type === "result") {
               setResult(data);
               setLogs((prev) => [...prev, "🏁 분석 완료!"]);
@@ -71,7 +70,6 @@ export default function Home() {
           {loading ? `분석 중... (${progress.current}/${progress.total})` : "분석 시작"}
         </button>
         
-        {/* 진행률 바 */}
         {loading && progress.total > 0 && (
           <div className="w-full bg-gray-700 h-4 rounded mt-3 overflow-hidden">
             <div
@@ -85,12 +83,12 @@ export default function Home() {
       {/* 결과 화면 */}
       {result && (
         <div className="space-y-8">
+          
           {/* 1. 보유 종목 */}
           <section className="bg-gray-800 p-4 rounded border border-gray-700">
             <h2 className="text-xl font-bold text-red-400 mb-2">
               🔥 [현재 보유 중인 종목] 총 {result.holding_list.length}개
             </h2>
-            <p className="text-gray-400 mb-4 text-xs">매도 신호 미발생 종목</p>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-gray-700 text-gray-300">
@@ -106,7 +104,7 @@ export default function Home() {
                 </thead>
                 <tbody className="divide-y divide-gray-700">
                   {result.holding_list.length === 0 ? (
-                    <tr><td colSpan={7} className="p-4 text-center text-gray-500">보유 중인 종목이 없습니다.</td></tr>
+                    <tr><td colSpan={7} className="p-4 text-center text-gray-500">보유 종목 없음</td></tr>
                   ) : (
                     result.holding_list.map((item: any) => {
                       const rate = ((item.current_price - item.avg_price) / item.avg_price) * 100;
@@ -148,7 +146,7 @@ export default function Home() {
                 </thead>
                 <tbody className="divide-y divide-gray-700">
                   {result.waiting_list.length === 0 ? (
-                    <tr><td colSpan={5} className="p-4 text-center text-gray-500">대기 중인 종목이 없습니다.</td></tr>
+                    <tr><td colSpan={5} className="p-4 text-center text-gray-500">대기 종목 없음</td></tr>
                   ) : (
                     result.waiting_list.map((item: any) => (
                       <tr key={item.ticker} className="hover:bg-gray-700">
@@ -168,20 +166,58 @@ export default function Home() {
             </div>
           </section>
 
-          {/* 3. 손실 종목 */}
+          {/* 3. 익절 완료 및 수익 종목 (NEW) */}
+          <section className="bg-gray-800 p-4 rounded border border-gray-700">
+            <h2 className="text-xl font-bold text-green-400 mb-2">
+              🏆 [익절 완료] 수익 실현 종목 - 총 {result.profit_list.length}개
+            </h2>
+            <p className="text-gray-400 mb-4 text-xs">현재 보유하지 않지만, 시뮬레이션 기간 동안 수익을 내고 청산된 종목들</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-700 text-gray-300">
+                  <tr>
+                    <th className="p-2">종목명</th>
+                    <th className="p-2 text-right">총 수익률</th>
+                    <th className="p-2 text-right">최종 자산</th>
+                    <th className="p-2 text-right">순수익금</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {result.profit_list.length === 0 ? (
+                    <tr><td colSpan={4} className="p-4 text-center text-gray-500">수익 실현 종목이 없습니다.</td></tr>
+                  ) : (
+                    result.profit_list.map((item: any) => {
+                      const netProfit = item.final_asset - 10000000; // 초기자금 1000만원 가정
+                      return (
+                        <tr key={item.ticker} className="hover:bg-gray-700">
+                          <td className="p-2 font-bold text-white">{item.stock_name}<span className="text-xs text-gray-500 ml-1">({item.ticker})</span></td>
+                          <td className="p-2 text-right text-red-400 font-bold">+{item.return_rate.toFixed(2)}%</td>
+                          <td className="p-2 text-right text-gray-300">{parseInt(item.final_asset).toLocaleString()}원</td>
+                          <td className="p-2 text-right text-red-400">+{parseInt(netProfit.toString()).toLocaleString()}원</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* 4. 손실 종목 */}
           <section className="bg-gray-800 p-4 rounded border border-gray-700">
             <h2 className="text-xl font-bold text-blue-400 mb-2">
               💀 누적 손실 발생 종목 - 총 {result.loss_list.length}개
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {result.loss_list.map((item: any) => (
-                    <div key={item.ticker} className="bg-gray-900 p-2 rounded border border-gray-700 flex justify-between">
-                        <span>{item.stock_name}</span>
+                    <div key={item.ticker} className="bg-gray-900 p-2 rounded border border-gray-700 flex justify-between items-center">
+                        <span className="text-gray-300">{item.stock_name}</span>
                         <span className="text-blue-400 font-bold">{item.return_rate.toFixed(2)}%</span>
                     </div>
                 ))}
             </div>
           </section>
+
         </div>
       )}
 

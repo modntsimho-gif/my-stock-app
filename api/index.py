@@ -43,8 +43,7 @@ def run_backtest_logic(ticker, stock_name):
     entry_amount = 0
     buy_count = 0
     first_buy_date = "-"
-    local_logs = []
-
+    
     # 시뮬레이션
     for date, row in df.iterrows():
         current_price = row['Close']
@@ -180,7 +179,6 @@ def analyze():
         results = []
         
         for i, (ticker, name) in enumerate(ticker_data):
-            # 진행 상황 전송
             yield json.dumps({
                 "type": "progress", 
                 "current": i + 1, 
@@ -192,17 +190,22 @@ def analyze():
             if res:
                 results.append(res)
         
-        # 최종 결과 분류
+        # 결과 분류
         holding_list = [r for r in results if r['is_holding']]
         waiting_list = sorted([r for r in results if r['is_waiting']], key=lambda x: x['gap_pct'])
         loss_list = [r for r in results if r['return_rate'] < 0]
+        
+        # ★ 추가된 부분: 수익 난 종목 (현재 미보유 + 수익률 > 0)
+        profit_list = [r for r in results if r['return_rate'] > 0 and not r['is_holding']]
+        # 수익률 높은 순서로 정렬
+        profit_list.sort(key=lambda x: x['return_rate'], reverse=True)
 
-        # 최종 데이터 전송
         yield json.dumps({
             "type": "result",
             "holding_list": holding_list,
             "waiting_list": waiting_list,
-            "loss_list": loss_list
+            "loss_list": loss_list,
+            "profit_list": profit_list # 프론트로 전송
         }) + "\n"
 
     return Response(stream_with_context(generate()), mimetype='application/json')
