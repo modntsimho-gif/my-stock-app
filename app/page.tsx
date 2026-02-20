@@ -56,7 +56,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 p-6 font-mono text-sm">
-      <h1 className="text-2xl font-bold mb-4 text-green-400">📈 퀀트 분석기 (Vercel Edition)</h1>
+      <h1 className="text-2xl font-bold mb-4 text-green-400">📈 가자 [반포자이] 로</h1>
 
       {/* 컨트롤 패널 */}
       <div className="mb-6">
