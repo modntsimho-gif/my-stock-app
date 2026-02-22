@@ -1,11 +1,12 @@
 from flask import Flask, Response, stream_with_context
 import pandas as pd
-import FinanceDataReader as fdr  # ★ 더 빠른 라이브러리 사용
+from pykrx import stock
 import datetime
 import os
 import json
 import time
 import math
+import concurrent.futures  # ★ 병렬 처리를 위한 핵심 라이브러리
 
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
@@ -13,40 +14,36 @@ app.config['JSON_AS_ASCII'] = False
 # ==========================================
 # 설정
 # ==========================================
-START_DATE = "2025-01-01"  # 포맷 변경 (YYYY-MM-DD)
+START_DATE = "20250101"
 INITIAL_CASH = 10000000
 WAITING_GAP_LIMIT = 4.0
 
-# JSON 깨짐 방지 (NaN -> None)
 def clean_nan(value):
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
     return value
 
-def run_backtest_logic(ticker, stock_name):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+def run_backtest_logic(args):
+    # 병렬 처리를 위해 인자를 튜플로 받음
+    ticker, stock_name = args
+    
+    today = datetime.datetime.now().strftime("%Y%m%d")
     
     try:
-        # ★ pykrx 대신 fdr 사용 (속도 훨씬 빠름)
-        # KRX 종목 코드는 그대로 사용 가능
-        df = fdr.DataReader(ticker, START_DATE, today)
+        # pykrx 사용
+        df = stock.get_market_ohlcv(START_DATE, today, ticker, adjusted=True)
     except:
         return None
 
     if df.empty: return None
 
-    # 컬럼 정리 (FinanceDataReader는 이미 영어 컬럼으로 나옴)
-    # Open, High, Low, Close, Volume, Change
     df = df.reset_index()
-    
-    # 날짜 컬럼 이름 통일
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'])
-    elif 'index' in df.columns: # 가끔 index로 들어올 때 처리
-        df = df.rename(columns={'index': 'Date'})
-        df['Date'] = pd.to_datetime(df['Date'])
-        
+    col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
+    if '날짜' not in df.columns:
+         col_map = {c: c for c in df.columns}
+    df = df.rename(columns=col_map)
+    df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
     
     # 지표 계산
@@ -66,7 +63,6 @@ def run_backtest_logic(ticker, stock_name):
     buy_count = 0
     first_buy_date = "-"
     
-    # 시뮬레이션
     for date, row in df.iterrows():
         current_price = row['Close']
         ma20 = row['MA20']
@@ -77,7 +73,7 @@ def run_backtest_logic(ticker, stock_name):
         target_mid = (ma20 + bb_upper) / 2
         upside_potential = ((target_mid - current_price) / current_price) * 100 if current_price > 0 else 0
 
-        # [매도]
+        # 매도
         if holdings > 0:
             target_tp = avg_price * 1.03 
             sell_signal = False
@@ -99,7 +95,7 @@ def run_backtest_logic(ticker, stock_name):
                 first_buy_date = "-"
                 continue
 
-        # [물타기]
+        # 물타기
         if holdings > 0:
             if current_price <= last_buy_price * 0.95:
                 water_price = current_price 
@@ -116,7 +112,7 @@ def run_backtest_logic(ticker, stock_name):
                     last_buy_price = water_price
                     buy_count += 1
 
-        # [진입]
+        # 진입
         if holdings == 0:
             is_bb_touch = current_price <= bb_lower
             is_enough_room = upside_potential >= 4.0
@@ -136,7 +132,6 @@ def run_backtest_logic(ticker, stock_name):
     final_asset = cash + (holdings * df.iloc[-1]['Close'])
     return_rate = (final_asset - INITIAL_CASH) / INITIAL_CASH * 100
     
-    # 현재 상태 체크
     is_waiting = False
     gap_pct = 0.0
     target_buy_price = 0
@@ -200,21 +195,35 @@ def analyze():
 
         results = []
         
-        for i, (ticker, name) in enumerate(ticker_data):
-            yield json.dumps({
-                "type": "progress", 
-                "current": i + 1, 
-                "total": total_count, 
-                "message": f"{name} 분석 중..."
-            }) + "\n"
+        # ★ 병렬 처리 시작 (최대 8개 동시 실행)
+        # Vercel 무료 서버는 CPU가 약하므로 너무 많이는 못 돌리지만 4~8개는 괜찮음
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            # 모든 작업을 한 번에 등록
+            future_to_ticker = {executor.submit(run_backtest_logic, t): t for t in ticker_data}
             
-            res = run_backtest_logic(ticker, name)
-            if res:
-                results.append(res)
+            completed_count = 0
             
-            # FDR은 빠르지만 너무 연속 호출하면 차단될 수 있으므로 아주 짧은 딜레이
-            time.sleep(0.01)
-        
+            # 작업이 끝나는 순서대로 결과 받기
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                completed_count += 1
+                ticker, name = future_to_ticker[future]
+                
+                try:
+                    res = future.result()
+                    if res:
+                        results.append(res)
+                    
+                    # 진행률 전송
+                    yield json.dumps({
+                        "type": "progress", 
+                        "current": completed_count, 
+                        "total": total_count, 
+                        "message": f"{name} 완료!"
+                    }) + "\n"
+                    
+                except Exception as e:
+                    print(f"Error {name}: {e}")
+
         # 결과 분류
         holding_list = [r for r in results if r['is_holding']]
         
