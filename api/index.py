@@ -1,6 +1,7 @@
 from flask import Flask, Response, stream_with_context
 import pandas as pd
 from pykrx import stock
+from supabase import create_client
 import datetime
 import os
 import json
@@ -10,23 +11,132 @@ app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 
 # ==========================================
-# 설정 및 전역 변수
+# 환경 변수 (Vercel 설정 필수)
 # ==========================================
-START_DATE = "20250101"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
 INITIAL_CASH = 10000000
 WAITING_GAP_LIMIT = 4.0
 
-def run_backtest_logic(ticker, stock_name):
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    try:
-        df = stock.get_market_ohlcv(START_DATE, today, ticker, adjusted=True)
-    except:
-        return None
-
-    if df.empty: return None
-
-    df = df.rename(columns={'시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'})
+def update_and_get_data(ticker):
+    """
+    1. DB 확인 -> 2. 부족한 부분 API 조회 -> 3. DB 저장(자동업데이트) -> 4. 전체 데이터 반환
+    """
+    df_db = pd.DataFrame()
+    last_date_db = None
     
+    # -------------------------------------------------------
+    # 1. Supabase에서 기존 데이터 조회
+    # -------------------------------------------------------
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            response = supabase.table("stock_candles")\
+                .select("*")\
+                .eq("ticker", ticker)\
+                .order("date", desc=False)\
+                .execute()
+            
+            if response.data:
+                df_db = pd.DataFrame(response.data)
+                df_db = df_db.rename(columns={
+                    'date': 'Date', 'open': 'Open', 'high': 'High', 
+                    'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                })
+                df_db['Date'] = pd.to_datetime(df_db['Date'])
+                df_db = df_db.set_index('Date')
+                if not df_db.empty:
+                    last_date_db = df_db.index[-1]
+        except Exception as e:
+            print(f"DB Read Error: {e}")
+
+    # -------------------------------------------------------
+    # 2. 부족한 기간(Gap) 계산 및 API 호출
+    # -------------------------------------------------------
+    today = datetime.datetime.now()
+    fetch_start_date = "20250101" # DB 없으면 기본 시작일
+
+    if last_date_db:
+        # DB 마지막 날짜 다음날부터 조회
+        fetch_start_date = (last_date_db + datetime.timedelta(days=1)).strftime("%Y%m%d")
+    
+    # 조회할 기간이 남아있다면 API 호출
+    df_new = pd.DataFrame()
+    if datetime.datetime.strptime(fetch_start_date, "%Y%m%d").date() <= today.date():
+        try:
+            today_str = today.strftime("%Y%m%d")
+            df_new = stock.get_market_ohlcv(fetch_start_date, today_str, ticker, adjusted=True)
+            
+            if not df_new.empty:
+                df_new = df_new.reset_index()
+                # 컬럼 매핑 (한글 -> 영어)
+                col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
+                if '날짜' not in df_new.columns: # pykrx 버전에 따라 다를 수 있음
+                     col_map = {c: c for c in df_new.columns}
+                
+                df_new = df_new.rename(columns=col_map)
+                
+                # 필수 컬럼만 추출
+                valid_cols = [c for c in ['Date', 'Open', 'High', 'Low', 'Close', 'Volume'] if c in df_new.columns]
+                df_new = df_new[valid_cols]
+                
+                # -------------------------------------------------------
+                # 3. ★ 핵심: 가져온 새 데이터를 Supabase에 저장 (Auto Update)
+                # -------------------------------------------------------
+                if SUPABASE_URL and SUPABASE_KEY:
+                    try:
+                        data_to_insert = []
+                        for _, row in df_new.iterrows():
+                            # 날짜 포맷팅
+                            date_val = row['Date']
+                            if isinstance(date_val, pd.Timestamp):
+                                date_val = date_val.strftime("%Y-%m-%d")
+                                
+                            data_to_insert.append({
+                                "ticker": ticker,
+                                "date": date_val,
+                                "open": int(row['Open']),
+                                "high": int(row['High']),
+                                "low": int(row['Low']),
+                                "close": int(row['Close']),
+                                "volume": int(row['Volume'])
+                            })
+                        
+                        if data_to_insert:
+                            # upsert: 있으면 업데이트, 없으면 추가 (오늘자 데이터 갱신용)
+                            supabase.table("stock_candles").upsert(data_to_insert).execute()
+                    except Exception as e:
+                        print(f"DB Write Error: {e}")
+
+                # 인덱스 설정
+                df_new['Date'] = pd.to_datetime(df_new['Date'])
+                df_new = df_new.set_index('Date')
+
+        except Exception as e:
+            print(f"API Fetch Error: {e}")
+
+    # -------------------------------------------------------
+    # 4. 데이터 병합 및 반환
+    # -------------------------------------------------------
+    if not df_db.empty and not df_new.empty:
+        # 중복 제거하며 병합 (새 데이터 우선)
+        df_combined = pd.concat([df_db, df_new])
+        df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
+        return df_combined.sort_index()
+    elif not df_db.empty:
+        return df_db.sort_index()
+    elif not df_new.empty:
+        return df_new.sort_index()
+    
+    return None
+
+def run_backtest_logic(ticker, stock_name):
+    # ★ 자동 업데이트 함수 호출
+    df = update_and_get_data(ticker)
+
+    if df is None or df.empty: return None
+
     # 지표 계산
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
@@ -156,14 +266,14 @@ def run_backtest_logic(ticker, stock_name):
 def analyze():
     def generate():
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(base_dir, '대상티커.xlsx')
+        ticker_file = os.path.join(base_dir, '대상티커.xlsx')
 
-        if not os.path.exists(file_path):
-            yield json.dumps({"type": "error", "message": "엑셀 파일 없음"}) + "\n"
+        if not os.path.exists(ticker_file):
+            yield json.dumps({"type": "error", "message": "대상티커.xlsx 파일 없음"}) + "\n"
             return
 
         try:
-            ranl_df = pd.read_excel(file_path)
+            ranl_df = pd.read_excel(ticker_file)
             ranl_df['티커'] = ranl_df['티커'].astype(str).str.strip().str.zfill(6)
             if '종목명' in ranl_df.columns:
                 ticker_data = list(zip(ranl_df['티커'], ranl_df['종목명']))
@@ -183,21 +293,22 @@ def analyze():
                 "type": "progress", 
                 "current": i + 1, 
                 "total": total_count, 
-                "message": f"{name}({ticker}) 분석 중..."
+                "message": f"{name} 분석 중..."
             }) + "\n"
             
             res = run_backtest_logic(ticker, name)
             if res:
                 results.append(res)
+            
+            # API 호출이 없으면(DB가 최신이면) 매우 빠름
+            # API 호출이 있으면 약간의 딜레이 필요
+            time.sleep(0.05)
         
         # 결과 분류
         holding_list = [r for r in results if r['is_holding']]
         waiting_list = sorted([r for r in results if r['is_waiting']], key=lambda x: x['gap_pct'])
         loss_list = [r for r in results if r['return_rate'] < 0]
-        
-        # ★ 추가된 부분: 수익 난 종목 (현재 미보유 + 수익률 > 0)
         profit_list = [r for r in results if r['return_rate'] > 0 and not r['is_holding']]
-        # 수익률 높은 순서로 정렬
         profit_list.sort(key=lambda x: x['return_rate'], reverse=True)
 
         yield json.dumps({
@@ -205,7 +316,7 @@ def analyze():
             "holding_list": holding_list,
             "waiting_list": waiting_list,
             "loss_list": loss_list,
-            "profit_list": profit_list # 프론트로 전송
+            "profit_list": profit_list
         }) + "\n"
 
     return Response(stream_with_context(generate()), mimetype='application/json')
