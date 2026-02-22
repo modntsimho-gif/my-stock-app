@@ -1,6 +1,6 @@
 from flask import Flask, Response, stream_with_context
 import pandas as pd
-from pykrx import stock
+import FinanceDataReader as fdr  # ★ 더 빠른 라이브러리 사용
 import datetime
 import os
 import json
@@ -13,7 +13,7 @@ app.config['JSON_AS_ASCII'] = False
 # ==========================================
 # 설정
 # ==========================================
-START_DATE = "20250101"  # 2025년 1월 1일부터 조회
+START_DATE = "2025-01-01"  # 포맷 변경 (YYYY-MM-DD)
 INITIAL_CASH = 10000000
 WAITING_GAP_LIMIT = 4.0
 
@@ -25,23 +25,28 @@ def clean_nan(value):
     return value
 
 def run_backtest_logic(ticker, stock_name):
-    today = datetime.datetime.now().strftime("%Y%m%d")
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
     
     try:
-        # 20250101 ~ 오늘까지 데이터 조회
-        df = stock.get_market_ohlcv(START_DATE, today, ticker, adjusted=True)
+        # ★ pykrx 대신 fdr 사용 (속도 훨씬 빠름)
+        # KRX 종목 코드는 그대로 사용 가능
+        df = fdr.DataReader(ticker, START_DATE, today)
     except:
         return None
 
     if df.empty: return None
 
-    # 컬럼 정리
+    # 컬럼 정리 (FinanceDataReader는 이미 영어 컬럼으로 나옴)
+    # Open, High, Low, Close, Volume, Change
     df = df.reset_index()
-    col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
-    if '날짜' not in df.columns:
-         col_map = {c: c for c in df.columns}
-    df = df.rename(columns=col_map)
-    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # 날짜 컬럼 이름 통일
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+    elif 'index' in df.columns: # 가끔 index로 들어올 때 처리
+        df = df.rename(columns={'index': 'Date'})
+        df['Date'] = pd.to_datetime(df['Date'])
+        
     df = df.set_index('Date')
     
     # 지표 계산
@@ -196,7 +201,6 @@ def analyze():
         results = []
         
         for i, (ticker, name) in enumerate(ticker_data):
-            # 시간 제한 로직 제거됨 (무조건 실행)
             yield json.dumps({
                 "type": "progress", 
                 "current": i + 1, 
@@ -208,8 +212,8 @@ def analyze():
             if res:
                 results.append(res)
             
-            # 실시간 조회 시 서버 부하 방지를 위해 아주 짧은 텀
-            time.sleep(0.05)
+            # FDR은 빠르지만 너무 연속 호출하면 차단될 수 있으므로 아주 짧은 딜레이
+            time.sleep(0.01)
         
         # 결과 분류
         holding_list = [r for r in results if r['is_holding']]
