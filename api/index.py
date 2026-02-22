@@ -21,7 +21,9 @@ WAITING_GAP_LIMIT = 4.0
 
 def update_and_get_data(ticker):
     """
-    1. DB 확인 -> 2. 부족한 부분 API 조회 -> 3. DB 저장(자동업데이트) -> 4. 전체 데이터 반환
+    1. DB 확인
+    2. 오늘 데이터는 무조건 다시 조회 (장중 변동 반영)
+    3. DB 업데이트(Upsert) 및 병합 반환
     """
     df_db = pd.DataFrame()
     last_date_db = None
@@ -52,43 +54,56 @@ def update_and_get_data(ticker):
             print(f"DB Read Error: {e}")
 
     # -------------------------------------------------------
-    # 2. 부족한 기간(Gap) 계산 및 API 호출
+    # 2. 조회 시작 날짜 계산 (핵심 로직 수정)
     # -------------------------------------------------------
     today = datetime.datetime.now()
     fetch_start_date = "20250101" # DB 없으면 기본 시작일
 
     if last_date_db:
-        # DB 마지막 날짜 다음날부터 조회
-        fetch_start_date = (last_date_db + datetime.timedelta(days=1)).strftime("%Y%m%d")
+        # DB 마지막 날짜가 오늘이면? -> 오늘 데이터를 다시 받아와야 함 (덮어쓰기 위해)
+        if last_date_db.date() == today.date():
+            fetch_start_date = today.strftime("%Y%m%d")
+            # 메모리에 있는 DB 데이터에서도 오늘 건 삭제 (중복 방지)
+            df_db = df_db[df_db.index.date != today.date()]
+        
+        # DB 마지막 날짜가 어제 이전이면? -> 그 다음날부터 조회
+        elif last_date_db.date() < today.date():
+            fetch_start_date = (last_date_db + datetime.timedelta(days=1)).strftime("%Y%m%d")
+        
+        # DB가 미래 날짜를 가지고 있을 리는 없지만 예외처리
+        else:
+            return df_db.sort_index()
     
-    # 조회할 기간이 남아있다면 API 호출
+    # -------------------------------------------------------
+    # 3. API 호출 (오늘 데이터 포함)
+    # -------------------------------------------------------
     df_new = pd.DataFrame()
+    
+    # 조회할 날짜가 오늘보다 미래가 아닐 때만 실행
     if datetime.datetime.strptime(fetch_start_date, "%Y%m%d").date() <= today.date():
         try:
             today_str = today.strftime("%Y%m%d")
+            # pykrx로 기간 조회
             df_new = stock.get_market_ohlcv(fetch_start_date, today_str, ticker, adjusted=True)
             
             if not df_new.empty:
                 df_new = df_new.reset_index()
-                # 컬럼 매핑 (한글 -> 영어)
+                # 컬럼 매핑
                 col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
-                if '날짜' not in df_new.columns: # pykrx 버전에 따라 다를 수 있음
+                if '날짜' not in df_new.columns:
                      col_map = {c: c for c in df_new.columns}
-                
                 df_new = df_new.rename(columns=col_map)
                 
-                # 필수 컬럼만 추출
                 valid_cols = [c for c in ['Date', 'Open', 'High', 'Low', 'Close', 'Volume'] if c in df_new.columns]
                 df_new = df_new[valid_cols]
                 
                 # -------------------------------------------------------
-                # 3. ★ 핵심: 가져온 새 데이터를 Supabase에 저장 (Auto Update)
+                # 4. Supabase에 저장 (Upsert: 있으면 수정, 없으면 추가)
                 # -------------------------------------------------------
                 if SUPABASE_URL and SUPABASE_KEY:
                     try:
                         data_to_insert = []
                         for _, row in df_new.iterrows():
-                            # 날짜 포맷팅
                             date_val = row['Date']
                             if isinstance(date_val, pd.Timestamp):
                                 date_val = date_val.strftime("%Y-%m-%d")
@@ -104,7 +119,7 @@ def update_and_get_data(ticker):
                             })
                         
                         if data_to_insert:
-                            # upsert: 있으면 업데이트, 없으면 추가 (오늘자 데이터 갱신용)
+                            # upsert가 핵심! (PK인 ticker+date가 같으면 덮어씀)
                             supabase.table("stock_candles").upsert(data_to_insert).execute()
                     except Exception as e:
                         print(f"DB Write Error: {e}")
@@ -117,11 +132,11 @@ def update_and_get_data(ticker):
             print(f"API Fetch Error: {e}")
 
     # -------------------------------------------------------
-    # 4. 데이터 병합 및 반환
+    # 5. 병합 및 반환
     # -------------------------------------------------------
     if not df_db.empty and not df_new.empty:
-        # 중복 제거하며 병합 (새 데이터 우선)
         df_combined = pd.concat([df_db, df_new])
+        # 혹시 모를 중복 제거 (마지막 값 우선)
         df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
         return df_combined.sort_index()
     elif not df_db.empty:
@@ -132,7 +147,6 @@ def update_and_get_data(ticker):
     return None
 
 def run_backtest_logic(ticker, stock_name):
-    # ★ 자동 업데이트 함수 호출
     df = update_and_get_data(ticker)
 
     if df is None or df.empty: return None
@@ -300,8 +314,7 @@ def analyze():
             if res:
                 results.append(res)
             
-            # API 호출이 없으면(DB가 최신이면) 매우 빠름
-            # API 호출이 있으면 약간의 딜레이 필요
+            # API 호출이 일어날 경우를 대비해 약간의 텀
             time.sleep(0.05)
         
         # 결과 분류
