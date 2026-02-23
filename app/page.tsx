@@ -21,16 +21,30 @@ export default function Home() {
 
       if (!reader) return;
 
+      // ★ 핵심: 잘린 데이터를 임시로 모아둘 변수 (Buffer)
+      let buffer = "";
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+        // 1. 새로운 조각을 버퍼에 추가
+        buffer += decoder.decode(value, { stream: true });
 
+        // 2. 줄바꿈(\n)을 기준으로 나눔
+        const lines = buffer.split("\n");
+
+        // 3. 마지막 조각은 "아직 덜 온 데이터"일 수 있으므로 다시 버퍼에 남겨둠
+        // (예: lines = ["완전한JSON", "완전한JSON", "덜온JSO..."])
+        buffer = lines.pop() || "";
+
+        // 4. 완전한 문장들만 해석
         for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
           try {
-            const data = JSON.parse(line);
+            const data = JSON.parse(trimmedLine);
 
             if (data.type === "start") {
               setProgress({ current: 0, total: data.total });
@@ -44,16 +58,19 @@ export default function Home() {
               setLogs((prev) => [...prev, `❌ 에러: ${data.message}`]);
             }
           } catch (e) {
-            console.error("JSON 파싱 에러", e);
+            console.error("JSON 파싱 에러 (무시됨):", trimmedLine);
+            // 여기서 에러가 나도 다음 조각이 오면 합쳐지므로 무시하고 넘어감
           }
         }
       }
     } catch (err) {
       alert("통신 중 에러 발생");
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans md:font-mono text-sm pb-10 relative">
