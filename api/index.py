@@ -1,4 +1,4 @@
-from flask import Flask, Response, stream_with_context
+from flask import Flask, Response, stream_with_context, request, jsonify
 import pandas as pd
 from pykrx import stock
 import datetime
@@ -282,3 +282,53 @@ def analyze():
         }) + "\n"
 
     return Response(stream_with_context(generate()), mimetype='application/json')
+
+@app.route('/api/chart')
+def get_chart_data():
+    ticker = request.args.get('ticker')
+    if not ticker:
+        return jsonify({"error": "No ticker provided"}), 400
+
+    today = datetime.datetime.now().strftime("%Y%m%d")
+    # 차트는 1년치 데이터만 가져와서 보여줍니다 (속도 최적화)
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y%m%d")
+
+    try:
+        df = stock.get_market_ohlcv(start_date, today, ticker, adjusted=True)
+        
+        # 데이터가 너무 적으면 에러 처리
+        if df.empty:
+            return jsonify({"error": "Empty data"}), 404
+
+        df = df.reset_index()
+        col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
+        if '날짜' not in df.columns:
+             col_map = {c: c for c in df.columns}
+        df = df.rename(columns=col_map)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df = df.set_index('Date')
+
+        # 볼린저 밴드 계산 (백테스팅 로직과 동일)
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['Std'] = df['Close'].rolling(window=20).std()
+        df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
+        df['BB_Lower'] = df['MA20'] - (2 * df['Std'])
+        
+        # NaN 제거 (초반 20일치)
+        df = df.dropna()
+
+        # JSON 변환
+        chart_data = []
+        for date, row in df.iterrows():
+            chart_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "close": int(row['Close']),
+                "ma20": int(row['MA20']) if not math.isnan(row['MA20']) else None,
+                "bb_upper": int(row['BB_Upper']) if not math.isnan(row['BB_Upper']) else None,
+                "bb_lower": int(row['BB_Lower']) if not math.isnan(row['BB_Lower']) else None,
+            })
+
+        return jsonify(chart_data)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

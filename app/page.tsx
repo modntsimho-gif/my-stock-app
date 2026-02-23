@@ -1,12 +1,51 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import {
+  ComposedChart,
+  Line,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceDot,
+} from "recharts";
 
 export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [selectedStock, setSelectedStock] = useState<any>(null); // ★ 모달용 상태
+  
+  // ★ 모달 및 차트용 State
+  const [selectedStock, setSelectedStock] = useState<any>(null);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+
+  // ★ 모달이 열릴 때(selectedStock 변경 시) 차트 데이터 가져오기
+  useEffect(() => {
+    if (selectedStock) {
+      setChartLoading(true);
+      // 백엔드에 /api/chart 엔드포인트가 구현되어 있어야 합니다.
+      fetch(`/api/chart?ticker=${selectedStock.ticker}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setChartData(data);
+          } else {
+            setChartData([]);
+          }
+        })
+        .catch((err) => {
+          console.error("차트 로딩 실패", err);
+          setChartData([]);
+        })
+        .finally(() => setChartLoading(false));
+    } else {
+      setChartData([]);
+    }
+  }, [selectedStock]);
 
   const runAnalysis = async () => {
     setLoading(true);
@@ -21,24 +60,16 @@ export default function Home() {
 
       if (!reader) return;
 
-      // ★ 핵심: 잘린 데이터를 임시로 모아둘 변수 (Buffer)
       let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // 1. 새로운 조각을 버퍼에 추가
         buffer += decoder.decode(value, { stream: true });
-
-        // 2. 줄바꿈(\n)을 기준으로 나눔
         const lines = buffer.split("\n");
-
-        // 3. 마지막 조각은 "아직 덜 온 데이터"일 수 있으므로 다시 버퍼에 남겨둠
-        // (예: lines = ["완전한JSON", "완전한JSON", "덜온JSO..."])
         buffer = lines.pop() || "";
 
-        // 4. 완전한 문장들만 해석
         for (const line of lines) {
           const trimmedLine = line.trim();
           if (!trimmedLine) continue;
@@ -59,7 +90,6 @@ export default function Home() {
             }
           } catch (e) {
             console.error("JSON 파싱 에러 (무시됨):", trimmedLine);
-            // 여기서 에러가 나도 다음 조각이 오면 합쳐지므로 무시하고 넘어감
           }
         }
       }
@@ -70,7 +100,6 @@ export default function Home() {
       setLoading(false);
     }
   };
-
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans md:font-mono text-sm pb-10 relative">
@@ -108,9 +137,7 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
-            {/* ============================================================
-                1. 보유 종목 (Holdings)
-               ============================================================ */}
+            {/* 1. 보유 종목 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-red-400 mb-3 flex items-center justify-between">
                 <span>🔥 보유 중인 종목</span>
@@ -126,7 +153,7 @@ export default function Home() {
                      return (
                       <div 
                         key={item.ticker} 
-                        onClick={() => setSelectedStock(item)} // ★ 클릭 시 모달 열기
+                        onClick={() => setSelectedStock(item)}
                         className="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-sm relative overflow-hidden cursor-pointer hover:bg-gray-750 hover:border-gray-500 transition-all"
                       >
                         <div className={`absolute top-0 left-0 w-1 h-full ${rate > 0 ? 'bg-red-500' : 'bg-blue-500'}`}></div>
@@ -152,9 +179,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* ============================================================
-                2. 매수 대기 (Waiting)
-               ============================================================ */}
+            {/* 2. 매수 대기 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-yellow-400 mb-3 flex items-center justify-between">
                 <span>⏳ 매수 대기 (BB하단 접근)</span>
@@ -196,9 +221,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* ============================================================
-                3. 익절 완료 (Profit)
-               ============================================================ */}
+            {/* 3. 익절 완료 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-green-400 mb-3 flex items-center justify-between">
                 <span>🏆 익절 완료 종목</span>
@@ -231,9 +254,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* ============================================================
-                4. 손실 종목 (Loss)
-               ============================================================ */}
+            {/* 4. 손실 종목 */}
             {result.loss_list.length > 0 && (
               <section>
                 <h2 className="text-lg md:text-xl font-bold text-blue-400 mb-3">
@@ -268,31 +289,96 @@ export default function Home() {
       </div>
 
       {/* ============================================================
-          ★ 상세 내역 모달 (Modal)
+          ★ 상세 내역 모달 (차트 + 거래내역)
          ============================================================ */}
       {selectedStock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedStock(null)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+          {/* 모달 크기 확장: max-w-lg -> max-w-4xl */}
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
             
             {/* 모달 헤더 */}
-            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-gray-900 sticky top-0">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-gray-900 sticky top-0 z-20">
               <div>
-                <h2 className="text-xl font-bold text-white">{selectedStock.stock_name}</h2>
-                <p className="text-xs text-gray-500">{selectedStock.ticker}</p>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  {selectedStock.stock_name}
+                  <span className="text-xs text-gray-500 font-normal">{selectedStock.ticker}</span>
+                </h2>
               </div>
               <button onClick={() => setSelectedStock(null)} className="text-gray-400 hover:text-white p-2">✕</button>
             </div>
 
             {/* 모달 내용 (스크롤 가능) */}
-            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+            <div className="p-5 overflow-y-auto flex-1 space-y-6">
               
-              {/* 요약 정보 */}
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-gray-800 p-3 rounded-lg text-center">
+              {/* 1. 차트 영역 (새로 추가됨) */}
+              <div className="h-[350px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative">
+                {chartLoading ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
+                    <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div>차트 데이터 로딩 중...</div>
+                  </div>
+                ) : chartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{ fontSize: 10, fill: "#666" }} 
+                        tickFormatter={(val) => val.slice(5)} // 2024-01-01 -> 01-01
+                        minTickGap={30}
+                      />
+                      <YAxis 
+                        domain={['auto', 'auto']} 
+                        tick={{ fontSize: 10, fill: "#666" }}
+                        tickFormatter={(val) => `${val.toLocaleString()}`}
+                        width={50}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "#1f2937", borderColor: "#374151", color: "#f3f4f6" }}
+                        itemStyle={{ fontSize: "12px" }}
+                        formatter={(value: any) => value.toLocaleString()}
+                        labelFormatter={(label) => `📅 ${label}`}
+                      />
+                      
+                      {/* 볼린저 밴드 영역 (배경색) */}
+                      <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
+                      <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
+
+                      {/* 선 그래프 */}
+                      <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
+                      <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
+                      <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
+                      <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2} dot={false} name="종가" />
+
+                      {/* 매매 시점 표시 (점) */}
+                      {selectedStock.trade_history?.map((trade: any, idx: number) => (
+                        <ReferenceDot
+                          key={idx}
+                          x={trade.date}
+                          y={trade.price}
+                          r={5}
+                          fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
+                          stroke="#fff"
+                          strokeWidth={1}
+                          // isFront={true}  <-- 이 줄을 삭제하세요!
+                        />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                    차트 데이터가 없습니다.
+                  </div>
+                )}
+              </div>
+
+              {/* 2. 요약 정보 */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-800 p-3 rounded-lg text-center border border-gray-700">
                   <div className="text-xs text-gray-500">현재가</div>
                   <div className="font-bold text-lg">{selectedStock.current_price.toLocaleString()}원</div>
                 </div>
-                <div className="bg-gray-800 p-3 rounded-lg text-center">
+                <div className="bg-gray-800 p-3 rounded-lg text-center border border-gray-700">
                   <div className="text-xs text-gray-500">수익률</div>
                   <div className={`font-bold text-lg ${selectedStock.return_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
                     {selectedStock.return_rate ? selectedStock.return_rate.toFixed(2) : 0}%
@@ -300,45 +386,47 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 거래 내역 리스트 */}
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Transaction History</h3>
-              
-              {(!selectedStock.trade_history || selectedStock.trade_history.length === 0) ? (
-                <div className="text-center text-gray-600 py-8">거래 내역이 없습니다.</div>
-              ) : (
-                <div className="space-y-3">
-                  {selectedStock.trade_history.map((log: any, idx: number) => (
-                    <div key={idx} className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 flex justify-between items-center text-sm">
-                      
-                      {/* 왼쪽: 날짜 및 타입 */}
-                      <div>
-                        <div className="text-xs text-gray-500 mb-1">{log.date}</div>
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                            log.type.includes("매수") 
-                              ? "bg-blue-900/30 text-blue-300 border border-blue-800" 
-                              : "bg-red-900/30 text-red-300 border border-red-800"
-                          }`}>
-                            {log.type}
-                          </span>
-                          <span className="text-gray-300 text-xs">{log.detail}</span>
+              {/* 3. 거래 내역 리스트 */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Transaction History</h3>
+                
+                {(!selectedStock.trade_history || selectedStock.trade_history.length === 0) ? (
+                  <div className="text-center text-gray-600 py-8 text-sm">거래 내역이 없습니다.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedStock.trade_history.map((log: any, idx: number) => (
+                      <div key={idx} className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 flex justify-between items-center text-sm hover:bg-gray-800 transition-colors">
+                        
+                        {/* 왼쪽: 날짜 및 타입 */}
+                        <div>
+                          <div className="text-xs text-gray-500 mb-0.5">{log.date}</div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              log.type.includes("매수") 
+                                ? "bg-red-900/30 text-red-300 border border-red-800" 
+                                : "bg-blue-900/30 text-blue-300 border border-blue-800"
+                            }`}>
+                              {log.type}
+                            </span>
+                            <span className="text-gray-300 text-xs">{log.detail}</span>
+                          </div>
+                        </div>
+
+                        {/* 오른쪽: 가격 및 수량 */}
+                        <div className="text-right">
+                          <div className="font-bold text-gray-200">{parseInt(log.price).toLocaleString()}원</div>
+                          <div className="text-xs text-gray-500">{log.qty}주</div>
+                          {log.profit_rate !== 0 && (
+                            <div className={`text-xs font-bold mt-1 ${log.profit_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                              {log.profit_rate > 0 ? "+" : ""}{log.profit_rate.toFixed(1)}%
+                            </div>
+                          )}
                         </div>
                       </div>
-
-                      {/* 오른쪽: 가격 및 수량 */}
-                      <div className="text-right">
-                        <div className="font-bold text-gray-200">{parseInt(log.price).toLocaleString()}원</div>
-                        <div className="text-xs text-gray-500">{log.qty}주</div>
-                        {log.profit_rate !== 0 && (
-                          <div className={`text-xs font-bold mt-1 ${log.profit_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                            {log.profit_rate > 0 ? "+" : ""}{log.profit_rate.toFixed(1)}%
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 모달 푸터 */}
