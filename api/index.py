@@ -43,7 +43,6 @@ def run_backtest_logic(args):
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
     
-    # 지표 계산
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
@@ -60,7 +59,9 @@ def run_backtest_logic(args):
     buy_count = 0
     first_buy_date = "-"
     
-    # 시뮬레이션
+    # ★ 거래 내역 기록용 리스트
+    trade_history = [] 
+
     for date, row in df.iterrows():
         current_price = row['Close']
         ma20 = row['MA20']
@@ -76,16 +77,32 @@ def run_backtest_logic(args):
             target_tp = avg_price * 1.03 
             sell_signal = False
             sell_price = 0
+            sell_type = ""
             
             if row['High'] >= target_tp:
                 sell_signal = True
                 sell_price = row['Open'] if row['Open'] > target_tp else target_tp
+                sell_type = "목표가 달성 (3%)"
             elif row['High'] >= target_mid:
                 sell_signal = True
                 sell_price = row['Open'] if row['Open'] > target_mid else target_mid
+                sell_type = "BB 중간값 도달"
 
             if sell_signal:
                 revenue = holdings * sell_price
+                profit_rate = (sell_price - avg_price) / avg_price * 100
+                
+                # ★ 매도 기록
+                trade_history.append({
+                    "date": date_str,
+                    "type": "매도",
+                    "detail": sell_type,
+                    "price": clean_nan(sell_price),
+                    "qty": holdings,
+                    "profit_rate": clean_nan(profit_rate),
+                    "balance": clean_nan(cash + revenue)
+                })
+
                 cash += revenue
                 holdings = 0
                 avg_price = 0
@@ -109,6 +126,17 @@ def run_backtest_logic(args):
                     cash -= cost
                     last_buy_price = water_price
                     buy_count += 1
+                    
+                    # ★ 물타기 기록
+                    trade_history.append({
+                        "date": date_str,
+                        "type": "매수 (물타기)",
+                        "detail": f"{buy_count}차 추매",
+                        "price": clean_nan(water_price),
+                        "qty": buy_qty,
+                        "profit_rate": 0,
+                        "balance": clean_nan(cash)
+                    })
 
         # [진입]
         if holdings == 0:
@@ -126,13 +154,21 @@ def run_backtest_logic(args):
                     last_buy_price = current_price
                     entry_amount = cost
                     first_buy_date = date_str
+                    
+                    # ★ 진입 기록
+                    trade_history.append({
+                        "date": date_str,
+                        "type": "매수 (진입)",
+                        "detail": "BB 하단 터치",
+                        "price": clean_nan(current_price),
+                        "qty": buy_qty,
+                        "profit_rate": 0,
+                        "balance": clean_nan(cash)
+                    })
 
     final_asset = cash + (holdings * df.iloc[-1]['Close'])
     return_rate = (final_asset - INITIAL_CASH) / INITIAL_CASH * 100
     
-    # =================================================
-    # ★ [수정됨] 현재 상태 및 기대 수익률 정밀 계산
-    # =================================================
     is_waiting = False
     gap_pct = 0.0
     target_buy_price = 0
@@ -144,25 +180,18 @@ def run_backtest_logic(args):
     last_ma20 = last_row['MA20']
     last_bb_upper = last_row['BB_Upper']
     
-    # 1차 목표가 (중간값)
     last_target_mid = (last_ma20 + last_bb_upper) / 2
-    
-    # 갭(Gap) 계산: 현재가와 볼린저 하단 차이
     if last_close > 0:
         gap_pct = (last_close - last_bb_lower) / last_close * 100
 
-    # 매수 대기 여부 판단
     if holdings == 0:
         if 0 < gap_pct <= WAITING_GAP_LIMIT:
             is_waiting = True
             target_buy_price = last_bb_lower
     
-    # ★ 기대 수익률 계산 (Waiting이면 '하단' 기준, 아니면 '현재가' 기준)
     if is_waiting and target_buy_price > 0:
-        # 매수 대기 중일 때는 "내가 살 가격(하단)" 대비 수익률
         current_upside = ((last_target_mid - target_buy_price) / target_buy_price) * 100
     elif last_close > 0:
-        # 그 외(보유 중이거나 관망)일 때는 "현재가" 대비 수익률
         current_upside = ((last_target_mid - last_close) / last_close) * 100
 
     return {
@@ -178,7 +207,8 @@ def run_backtest_logic(args):
         'is_waiting': is_waiting,
         'gap_pct': clean_nan(gap_pct),
         'target_buy_price': clean_nan(target_buy_price),
-        'current_upside': clean_nan(current_upside)
+        'current_upside': clean_nan(current_upside),
+        'trade_history': trade_history  # ★ 여기에 거래 내역 추가됨
     }
 
 @app.route('/api/analyze')
