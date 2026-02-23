@@ -6,7 +6,7 @@ import os
 import json
 import time
 import math
-import concurrent.futures  # ★ 병렬 처리를 위한 핵심 라이브러리
+import concurrent.futures
 
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
@@ -25,13 +25,10 @@ def clean_nan(value):
     return value
 
 def run_backtest_logic(args):
-    # 병렬 처리를 위해 인자를 튜플로 받음
     ticker, stock_name = args
-    
     today = datetime.datetime.now().strftime("%Y%m%d")
     
     try:
-        # pykrx 사용
         df = stock.get_market_ohlcv(START_DATE, today, ticker, adjusted=True)
     except:
         return None
@@ -63,6 +60,7 @@ def run_backtest_logic(args):
     buy_count = 0
     first_buy_date = "-"
     
+    # 시뮬레이션
     for date, row in df.iterrows():
         current_price = row['Close']
         ma20 = row['MA20']
@@ -73,7 +71,7 @@ def run_backtest_logic(args):
         target_mid = (ma20 + bb_upper) / 2
         upside_potential = ((target_mid - current_price) / current_price) * 100 if current_price > 0 else 0
 
-        # 매도
+        # [매도]
         if holdings > 0:
             target_tp = avg_price * 1.03 
             sell_signal = False
@@ -95,7 +93,7 @@ def run_backtest_logic(args):
                 first_buy_date = "-"
                 continue
 
-        # 물타기
+        # [물타기]
         if holdings > 0:
             if current_price <= last_buy_price * 0.95:
                 water_price = current_price 
@@ -112,7 +110,7 @@ def run_backtest_logic(args):
                     last_buy_price = water_price
                     buy_count += 1
 
-        # 진입
+        # [진입]
         if holdings == 0:
             is_bb_touch = current_price <= bb_lower
             is_enough_room = upside_potential >= 4.0
@@ -132,6 +130,9 @@ def run_backtest_logic(args):
     final_asset = cash + (holdings * df.iloc[-1]['Close'])
     return_rate = (final_asset - INITIAL_CASH) / INITIAL_CASH * 100
     
+    # =================================================
+    # ★ [수정됨] 현재 상태 및 기대 수익률 정밀 계산
+    # =================================================
     is_waiting = False
     gap_pct = 0.0
     target_buy_price = 0
@@ -143,15 +144,26 @@ def run_backtest_logic(args):
     last_ma20 = last_row['MA20']
     last_bb_upper = last_row['BB_Upper']
     
+    # 1차 목표가 (중간값)
     last_target_mid = (last_ma20 + last_bb_upper) / 2
-    if last_close > 0:
-        current_upside = ((last_target_mid - last_close) / last_close) * 100
-        gap_pct = (last_close - last_bb_lower) / last_close * 100
     
+    # 갭(Gap) 계산: 현재가와 볼린저 하단 차이
+    if last_close > 0:
+        gap_pct = (last_close - last_bb_lower) / last_close * 100
+
+    # 매수 대기 여부 판단
     if holdings == 0:
         if 0 < gap_pct <= WAITING_GAP_LIMIT:
             is_waiting = True
             target_buy_price = last_bb_lower
+    
+    # ★ 기대 수익률 계산 (Waiting이면 '하단' 기준, 아니면 '현재가' 기준)
+    if is_waiting and target_buy_price > 0:
+        # 매수 대기 중일 때는 "내가 살 가격(하단)" 대비 수익률
+        current_upside = ((last_target_mid - target_buy_price) / target_buy_price) * 100
+    elif last_close > 0:
+        # 그 외(보유 중이거나 관망)일 때는 "현재가" 대비 수익률
+        current_upside = ((last_target_mid - last_close) / last_close) * 100
 
     return {
         'ticker': ticker,
@@ -195,15 +207,10 @@ def analyze():
 
         results = []
         
-        # ★ 병렬 처리 시작 (최대 8개 동시 실행)
-        # Vercel 무료 서버는 CPU가 약하므로 너무 많이는 못 돌리지만 4~8개는 괜찮음
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            # 모든 작업을 한 번에 등록
             future_to_ticker = {executor.submit(run_backtest_logic, t): t for t in ticker_data}
-            
             completed_count = 0
             
-            # 작업이 끝나는 순서대로 결과 받기
             for future in concurrent.futures.as_completed(future_to_ticker):
                 completed_count += 1
                 ticker, name = future_to_ticker[future]
@@ -213,7 +220,6 @@ def analyze():
                     if res:
                         results.append(res)
                     
-                    # 진행률 전송
                     yield json.dumps({
                         "type": "progress", 
                         "current": completed_count, 
