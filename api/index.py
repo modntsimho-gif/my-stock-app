@@ -291,7 +291,7 @@ def get_chart_data():
 
     today = datetime.datetime.now().strftime("%Y%m%d")
     # 차트는 1년치 데이터만 가져와서 보여줍니다 (속도 최적화)
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y%m%d")
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 5)).strftime("%Y%m%d")
 
     try:
         df = stock.get_market_ohlcv(start_date, today, ticker, adjusted=True)
