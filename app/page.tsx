@@ -10,6 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceDot,
+  Brush, // ★ 1. Brush 컴포넌트 추가
 } from "recharts";
 
 export default function Home() {
@@ -27,7 +28,6 @@ export default function Home() {
   useEffect(() => {
     if (selectedStock) {
       setChartLoading(true);
-      // 백엔드에 /api/chart 엔드포인트가 구현되어 있어야 합니다.
       fetch(`/api/chart?ticker=${selectedStock.ticker}`)
         .then((res) => res.json())
         .then((data) => {
@@ -293,7 +293,6 @@ export default function Home() {
          ============================================================ */}
       {selectedStock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedStock(null)}>
-          {/* 모달 크기 확장: max-w-lg -> max-w-4xl */}
           <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
             
             {/* 모달 헤더 */}
@@ -310,8 +309,8 @@ export default function Home() {
             {/* 모달 내용 (스크롤 가능) */}
             <div className="p-5 overflow-y-auto flex-1 space-y-6">
               
-              {/* 1. 차트 영역 (새로 추가됨) */}
-              <div className="h-[350px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative">
+              {/* 1. 차트 영역 */}
+              <div className="h-[400px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative">
                 {chartLoading ? (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
                     <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
@@ -324,7 +323,7 @@ export default function Home() {
                       <XAxis 
                         dataKey="date" 
                         tick={{ fontSize: 10, fill: "#666" }} 
-                        tickFormatter={(val) => val.slice(5)} // 2024-01-01 -> 01-01
+                        tickFormatter={(val) => val.slice(2)} // 2024-01-01 -> 24-01-01
                         minTickGap={30}
                       />
                       <YAxis 
@@ -340,7 +339,7 @@ export default function Home() {
                         labelFormatter={(label) => `📅 ${label}`}
                       />
                       
-                      {/* 볼린저 밴드 영역 (배경색) */}
+                      {/* 볼린저 밴드 영역 */}
                       <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
                       <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
 
@@ -350,7 +349,7 @@ export default function Home() {
                       <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
                       <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2} dot={false} name="종가" />
 
-                      {/* 매매 시점 표시 (점) */}
+                      {/* 매매 시점 표시 */}
                       {selectedStock.trade_history?.map((trade: any, idx: number) => (
                         <ReferenceDot
                           key={idx}
@@ -360,9 +359,18 @@ export default function Home() {
                           fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
                           stroke="#fff"
                           strokeWidth={1}
-                          // isFront={true}  <-- 이 줄을 삭제하세요!
                         />
                       ))}
+
+                      {/* ★ 2. Brush 추가 (슬라이더) */}
+                      <Brush 
+                        dataKey="date" 
+                        height={30} 
+                        stroke="#8884d8"
+                        startIndex={Math.max(0, chartData.length - 100)} // 최근 100일만 기본 표시
+                        endIndex={chartData.length - 1}
+                      />
+                      
                     </ComposedChart>
                   </ResponsiveContainer>
                 ) : (
