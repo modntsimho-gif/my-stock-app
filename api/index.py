@@ -59,7 +59,6 @@ def run_backtest_logic(args):
     buy_count = 0
     first_buy_date = "-"
     
-    # ★ 거래 내역 기록용 리스트
     trade_history = [] 
 
     for date, row in df.iterrows():
@@ -92,7 +91,6 @@ def run_backtest_logic(args):
                 revenue = holdings * sell_price
                 profit_rate = (sell_price - avg_price) / avg_price * 100
                 
-                # ★ 매도 기록
                 trade_history.append({
                     "date": date_str,
                     "type": "매도",
@@ -127,7 +125,6 @@ def run_backtest_logic(args):
                     last_buy_price = water_price
                     buy_count += 1
                     
-                    # ★ 물타기 기록
                     trade_history.append({
                         "date": date_str,
                         "type": "매수 (물타기)",
@@ -155,7 +152,6 @@ def run_backtest_logic(args):
                     entry_amount = cost
                     first_buy_date = date_str
                     
-                    # ★ 진입 기록
                     trade_history.append({
                         "date": date_str,
                         "type": "매수 (진입)",
@@ -208,17 +204,24 @@ def run_backtest_logic(args):
         'gap_pct': clean_nan(gap_pct),
         'target_buy_price': clean_nan(target_buy_price),
         'current_upside': clean_nan(current_upside),
-        'trade_history': trade_history  # ★ 여기에 거래 내역 추가됨
+        'trade_history': trade_history
     }
 
 @app.route('/api/analyze')
 def analyze():
+    # 👇 [수정] URL 파라미터 확인 (기본값 '1')
+    file_option = request.args.get('file', '1')
+    
+    # 👇 [수정] 파일명 결정 로직
+    target_filename = '대상티커2.xlsx' if file_option == '2' else '대상티커.xlsx'
+
     def generate():
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(base_dir, '대상티커.xlsx')
+        # 👇 [수정] 결정된 파일명 사용
+        file_path = os.path.join(base_dir, target_filename)
 
         if not os.path.exists(file_path):
-            yield json.dumps({"type": "error", "message": "엑셀 파일 없음"}) + "\n"
+            yield json.dumps({"type": "error", "message": f"{target_filename} 파일이 없습니다."}) + "\n"
             return
 
         try:
@@ -260,7 +263,6 @@ def analyze():
                 except Exception as e:
                     print(f"Error {name}: {e}")
 
-        # 결과 분류
         holding_list = [r for r in results if r['is_holding']]
         
         waiting_list = sorted(
@@ -290,13 +292,11 @@ def get_chart_data():
         return jsonify({"error": "No ticker provided"}), 400
 
     today = datetime.datetime.now().strftime("%Y%m%d")
-    # 차트는 1년치 데이터만 가져와서 보여줍니다 (속도 최적화)
     start_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 5)).strftime("%Y%m%d")
 
     try:
         df = stock.get_market_ohlcv(start_date, today, ticker, adjusted=True)
         
-        # 데이터가 너무 적으면 에러 처리
         if df.empty:
             return jsonify({"error": "Empty data"}), 404
 
@@ -308,16 +308,13 @@ def get_chart_data():
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.set_index('Date')
 
-        # 볼린저 밴드 계산 (백테스팅 로직과 동일)
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['Std'] = df['Close'].rolling(window=20).std()
         df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
         df['BB_Lower'] = df['MA20'] - (2 * df['Std'])
         
-        # NaN 제거 (초반 20일치)
         df = df.dropna()
 
-        # JSON 변환
         chart_data = []
         for date, row in df.iterrows():
             chart_data.append({

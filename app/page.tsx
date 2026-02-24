@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceDot,
-  Brush, // ★ 1. Brush 컴포넌트 추가
+  Brush,
 } from "recharts";
 
 export default function Home() {
@@ -47,14 +47,16 @@ export default function Home() {
     }
   }, [selectedStock]);
 
-  const runAnalysis = async () => {
+  // 👇 [수정] fileNum 인자를 받도록 변경
+  const runAnalysis = async (fileNum: number) => {
     setLoading(true);
     setResult(null);
     setLogs([]);
     setProgress({ current: 0, total: 0 });
 
     try {
-      const response = await fetch("/api/analyze");
+      // 👇 [수정] URL에 file 파라미터 추가 (?file=1 또는 ?file=2)
+      const response = await fetch(`/api/analyze?file=${fileNum}`);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
@@ -111,17 +113,35 @@ export default function Home() {
 
         {/* 컨트롤 패널 */}
         <div>
-          <button
-            onClick={runAnalysis}
-            disabled={loading}
-            className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md ${
-              loading 
-                ? "bg-gray-700 text-gray-400 cursor-not-allowed" 
-                : "bg-green-600 hover:bg-green-500 text-white active:scale-95"
-            }`}
-          >
-            {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 시작"}
-          </button>
+          {/* 👇 [수정] 버튼 2개를 가로로 배치 */}
+          <div className="flex flex-col md:flex-row gap-2">
+            
+            {/* 버튼 1: 대상티커.xlsx */}
+            <button
+              onClick={() => runAnalysis(1)}
+              disabled={loading}
+              className={`flex-1 px-6 py-3 rounded-lg font-bold transition-all shadow-md ${
+                loading 
+                  ? "bg-gray-700 text-gray-400 cursor-not-allowed" 
+                  : "bg-green-600 hover:bg-green-500 text-white active:scale-95"
+              }`}
+            >
+              {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 (기본)"}
+            </button>
+
+            {/* 버튼 2: 대상티커2.xlsx */}
+            <button
+              onClick={() => runAnalysis(2)}
+              disabled={loading}
+              className={`flex-1 px-6 py-3 rounded-lg font-bold transition-all shadow-md ${
+                loading 
+                  ? "bg-gray-700 text-gray-400 cursor-not-allowed" 
+                  : "bg-blue-600 hover:bg-blue-500 text-white active:scale-95"
+              }`}
+            >
+              {loading ? "대기 중..." : "🧪 분석 (파일 2)"}
+            </button>
+          </div>
           
           {loading && progress.total > 0 && (
             <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
