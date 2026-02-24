@@ -36,6 +36,9 @@ def run_backtest_logic(args):
     if df.empty: return None
 
     df = df.reset_index()
+    df = df[df['Open'] > 0] 
+    df = df[df['Volume'] > 0] 
+        
     col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
     if '날짜' not in df.columns:
          col_map = {c: c for c in df.columns}
@@ -43,8 +46,7 @@ def run_backtest_logic(args):
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
 
-    df = df[df['Open'] > 0] 
-    df = df[df['Volume'] > 0] 
+
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
