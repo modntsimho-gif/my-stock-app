@@ -329,76 +329,79 @@ export default function Home() {
             {/* 모달 내용 (스크롤 가능) */}
             <div className="p-5 overflow-y-auto flex-1 space-y-6">
               
-              {/* 1. 차트 영역 */}
-              <div className="h-[400px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative">
-                {chartLoading ? (
-                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
-                    <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
-                    <div>차트 데이터 로딩 중...</div>
-                  </div>
-                ) : chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                      <XAxis 
-                        dataKey="date" 
-                        tick={{ fontSize: 10, fill: "#666" }} 
-                        tickFormatter={(val) => val.slice(2)} // 2024-01-01 -> 24-01-01
-                        minTickGap={30}
-                      />
-                      <YAxis 
-                        domain={['auto', 'auto']} 
-                        tick={{ fontSize: 10, fill: "#666" }}
-                        tickFormatter={(val) => `${val.toLocaleString()}`}
-                        width={50}
-                      />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: "#1f2937", borderColor: "#374151", color: "#f3f4f6" }}
-                        itemStyle={{ fontSize: "12px" }}
-                        formatter={(value: any) => value.toLocaleString()}
-                        labelFormatter={(label) => `📅 ${label}`}
-                      />
-                      
-                      {/* 볼린저 밴드 영역 */}
-                      <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
-                      <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
+            {/* 1. 차트 영역 */}
+            {/* 👇 [수정 1] touch-action: pan-y 스타일 추가 (좌우 터치는 차트가, 상하 터치는 스크롤이 담당) */}
+            <div 
+              className="h-[400px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative"
+              style={{ touchAction: "pan-y" }} 
+            >
+              {chartLoading ? (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
+                  <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div>차트 데이터 로딩 중...</div>
+                </div>
+              ) : chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                    <XAxis 
+                      dataKey="date" 
+                      tick={{ fontSize: 10, fill: "#666" }} 
+                      tickFormatter={(val) => val.slice(2)} 
+                      minTickGap={30}
+                    />
+                    <YAxis 
+                      domain={['auto', 'auto']} 
+                      tick={{ fontSize: 10, fill: "#666" }}
+                      tickFormatter={(val) => `${val.toLocaleString()}`}
+                      width={40} // 모바일 공간 확보를 위해 너비 약간 축소
+                    />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: "#1f2937", borderColor: "#374151", color: "#f3f4f6" }}
+                      itemStyle={{ fontSize: "12px" }}
+                      formatter={(value: any) => value.toLocaleString()}
+                      labelFormatter={(label) => `📅 ${label}`}
+                    />
+                    
+                    <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
+                    <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
 
-                      {/* 선 그래프 */}
-                      <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
-                      <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
-                      <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
-                      <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2} dot={false} name="종가" />
+                    <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
+                    <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
+                    <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
+                    <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2} dot={false} name="종가" />
 
-                      {/* 매매 시점 표시 */}
-                      {selectedStock.trade_history?.map((trade: any, idx: number) => (
-                        <ReferenceDot
-                          key={idx}
-                          x={trade.date}
-                          y={trade.price}
-                          r={5}
-                          fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
-                          stroke="#fff"
-                          strokeWidth={1}
-                        />
-                      ))}
-
-                      {/* ★ 2. Brush 추가 (슬라이더) */}
-                      <Brush 
-                        dataKey="date" 
-                        height={30} 
-                        stroke="#8884d8"
-                        startIndex={Math.max(0, chartData.length - 100)} // 최근 100일만 기본 표시
-                        endIndex={chartData.length - 1}
+                    {selectedStock.trade_history?.map((trade: any, idx: number) => (
+                      <ReferenceDot
+                        key={idx}
+                        x={trade.date}
+                        y={trade.price}
+                        r={5}
+                        fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
+                        stroke="#fff"
+                        strokeWidth={1}
                       />
-                      
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-gray-500">
-                    차트 데이터가 없습니다.
-                  </div>
-                )}
-              </div>
+                    ))}
+
+                    {/* 👇 [수정 2] Brush 크기 확대 및 터치 영역 개선 */}
+                    <Brush 
+                      dataKey="date" 
+                      height={40}          // 높이를 30 -> 40으로 키움 (터치 영역 확보)
+                      travellerWidth={20}  // 양쪽 핸들(잡는 부분) 너비 확대
+                      stroke="#8884d8"
+                      fill="#1f2937"       // 슬라이더 배경색 추가 (시인성 확보)
+                      startIndex={Math.max(0, chartData.length - 60)} // 모바일은 화면이 좁으니 60일치만 먼저 보여줌
+                      endIndex={chartData.length - 1}
+                    />
+                    
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                  차트 데이터가 없습니다.
+                </div>
+              )}
+            </div>
 
               {/* 2. 요약 정보 */}
               <div className="grid grid-cols-2 gap-3">
