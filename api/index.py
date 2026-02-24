@@ -33,9 +33,6 @@ def run_backtest_logic(args):
     except:
         return None
 
-    df = df[df['Open'] > 0] 
-    df = df[df['Volume'] > 0] 
-
     if df.empty: return None
 
     df = df.reset_index()
