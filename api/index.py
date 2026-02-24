@@ -42,7 +42,9 @@ def run_backtest_logic(args):
     df = df.rename(columns=col_map)
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
-    
+
+    df = df[df['Open'] > 0] 
+    df = df[df['Volume'] > 0] 
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
