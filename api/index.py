@@ -33,12 +33,13 @@ def run_backtest_logic(args):
     except:
         return None
 
+    df = df[df['Open'] > 0] 
+    df = df[df['Volume'] > 0] 
+
     if df.empty: return None
 
     df = df.reset_index()
-    df = df[df['Open'] > 0] 
-    df = df[df['Volume'] > 0] 
-        
+
     col_map = {'날짜': 'Date', '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'}
     if '날짜' not in df.columns:
          col_map = {c: c for c in df.columns}
