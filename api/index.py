@@ -14,7 +14,7 @@ app.config['JSON_AS_ASCII'] = False
 # ==========================================
 # 설정
 # ==========================================
-START_DATE = "20250101"
+START_DATE = "20210101"
 INITIAL_CASH = 10000000
 WAITING_GAP_LIMIT = 4.0
 
