@@ -1,18 +1,26 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
+import { 
+  createChart, 
+  ColorType, 
+  CrosshairMode, 
+  LineStyle, 
+  LineSeries, 
+  AreaSeries 
+} from "lightweight-charts";
+
 
 // ============================================================================
 // ★ TradingView 차트 컴포넌트 (분리형)
 // ============================================================================
 const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: any[] }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || data.length === 0) return;
 
     // 1. 차트 생성
-    // ★ 여기서 'as any'를 붙여서 TS 에러를 방지합니다.
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -36,7 +44,18 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
       crosshair: {
         mode: CrosshairMode.Normal,
       },
-    }) as any; // 👈 핵심: chart 객체를 any로 취급
+      // 모바일 제스처 활성화
+      handleScale: {
+        axisPressedMouseMove: true,
+      },
+      handleScroll: {
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+    });
+
+    chartRef.current = chart;
 
     // 2. 데이터 변환
     const lineData = data.map(d => ({ time: d.date, value: d.close }));
@@ -44,32 +63,33 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 3. 시리즈 추가
+    // 3. 시리즈 추가 (v5 문법: addSeries 사용)
     
-    // (1) 볼린저 밴드
-    const bbUpperSeries = chart.addLineSeries({ 
+    // (1) 볼린저 밴드 상단
+    const bbUpperSeries = chart.addSeries(LineSeries, { 
       color: 'rgba(239, 68, 68, 0.5)', 
       lineWidth: 1, 
       lineStyle: LineStyle.Dashed 
     });
     bbUpperSeries.setData(bbUpData);
     
-    const bbLowerSeries = chart.addLineSeries({ 
+    // (2) 볼린저 밴드 하단
+    const bbLowerSeries = chart.addSeries(LineSeries, { 
       color: 'rgba(59, 130, 246, 0.5)', 
       lineWidth: 1, 
       lineStyle: LineStyle.Dashed 
     });
     bbLowerSeries.setData(bbDownData);
 
-    // (2) MA20
-    const maSeries = chart.addLineSeries({ 
+    // (3) MA20 (중심선)
+    const maSeries = chart.addSeries(LineSeries, { 
       color: '#fbbf24', 
       lineWidth: 1 
     });
     maSeries.setData(ma20Data);
 
-    // (3) 종가 (메인)
-    const mainSeries = chart.addAreaSeries({
+    // (4) 종가 (메인 - 영역형)
+    const mainSeries = chart.addSeries(AreaSeries, {
       topColor: 'rgba(34, 197, 94, 0.56)',
       bottomColor: 'rgba(34, 197, 94, 0.04)',
       lineColor: '#4ade80',
@@ -87,7 +107,9 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         text: t.type.includes("매수") ? 'B' : 'S',
         size: 1,
       }));
-      mainSeries.setMarkers(markers);
+      
+      // ★ (mainSeries as any)로 감싸서 빨간줄 강제 제거
+      (mainSeries as any).setMarkers(markers);
     }
 
     // 5. 리사이즈 핸들러
@@ -98,7 +120,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     };
     window.addEventListener('resize', handleResize);
 
-    // 6. 초기 줌 설정
+    // 6. 초기 줌 설정 (최근 60일)
     if(data.length > 60) {
         const visibleRange = {
             from: data[data.length - 60].date,
