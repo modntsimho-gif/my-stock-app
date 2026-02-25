@@ -1,33 +1,143 @@
 "use client";
-import { useState, useEffect } from "react";
-import {
-  ComposedChart,
-  Line,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceDot,
-  Brush,
-} from "recharts";
+import { useState, useEffect, useRef } from "react";
+import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
+// ============================================================================
+// ★ TradingView 차트 컴포넌트 (분리형)
+// ============================================================================
+const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: any[] }) => {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!chartContainerRef.current || data.length === 0) return;
+
+    // 1. 차트 생성
+    // ★ 여기서 'as any'를 붙여서 TS 에러를 방지합니다.
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: '#9ca3af',
+      },
+      grid: {
+        vertLines: { color: '#374151', style: LineStyle.Dotted },
+        horzLines: { color: '#374151', style: LineStyle.Dotted },
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 400,
+      rightPriceScale: {
+        borderColor: '#374151',
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: '#374151',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+      },
+    }) as any; // 👈 핵심: chart 객체를 any로 취급
+
+    // 2. 데이터 변환
+    const lineData = data.map(d => ({ time: d.date, value: d.close }));
+    const ma20Data = data.map(d => ({ time: d.date, value: d.ma20 })).filter(d => d.value);
+    const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
+    const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
+
+    // 3. 시리즈 추가
+    
+    // (1) 볼린저 밴드
+    const bbUpperSeries = chart.addLineSeries({ 
+      color: 'rgba(239, 68, 68, 0.5)', 
+      lineWidth: 1, 
+      lineStyle: LineStyle.Dashed 
+    });
+    bbUpperSeries.setData(bbUpData);
+    
+    const bbLowerSeries = chart.addLineSeries({ 
+      color: 'rgba(59, 130, 246, 0.5)', 
+      lineWidth: 1, 
+      lineStyle: LineStyle.Dashed 
+    });
+    bbLowerSeries.setData(bbDownData);
+
+    // (2) MA20
+    const maSeries = chart.addLineSeries({ 
+      color: '#fbbf24', 
+      lineWidth: 1 
+    });
+    maSeries.setData(ma20Data);
+
+    // (3) 종가 (메인)
+    const mainSeries = chart.addAreaSeries({
+      topColor: 'rgba(34, 197, 94, 0.56)',
+      bottomColor: 'rgba(34, 197, 94, 0.04)',
+      lineColor: '#4ade80',
+      lineWidth: 2,
+    });
+    mainSeries.setData(lineData);
+
+    // 4. 매매 마커 표시
+    if (tradeHistory && tradeHistory.length > 0) {
+      const markers = tradeHistory.map((t: any) => ({
+        time: t.date,
+        position: t.type.includes("매수") ? 'belowBar' : 'aboveBar',
+        color: t.type.includes("매수") ? '#ef4444' : '#3b82f6',
+        shape: t.type.includes("매수") ? 'arrowUp' : 'arrowDown',
+        text: t.type.includes("매수") ? 'B' : 'S',
+        size: 1,
+      }));
+      mainSeries.setMarkers(markers);
+    }
+
+    // 5. 리사이즈 핸들러
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    // 6. 초기 줌 설정
+    if(data.length > 60) {
+        const visibleRange = {
+            from: data[data.length - 60].date,
+            to: data[data.length - 1].date
+        };
+        try {
+            chart.timeScale().setVisibleRange(visibleRange);
+        } catch(e) {
+            chart.timeScale().fitContent();
+        }
+    } else {
+        chart.timeScale().fitContent();
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, [data, tradeHistory]);
+
+  return <div ref={chartContainerRef} className="w-full h-full" />;
+};
+
+
+
+
+// ============================================================================
+// ★ 메인 페이지 컴포넌트
+// ============================================================================
 export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   
-  // ★ 모달 및 차트용 State
   const [selectedStock, setSelectedStock] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
-  
-  // ★ 차트 기간 제어용 State (기본값: 최근 60일)
-  const [rangeStart, setRangeStart] = useState<number>(0);
 
-  // ★ 모달이 열릴 때(selectedStock 변경 시) 차트 데이터 가져오기
   useEffect(() => {
     if (selectedStock) {
       setChartLoading(true);
@@ -35,9 +145,9 @@ export default function Home() {
         .then((res) => res.json())
         .then((data) => {
           if (Array.isArray(data)) {
-            setChartData(data);
-            // 데이터 로딩 직후 기본 3개월(60일)치 보여주기
-            setRangeStart(Math.max(0, data.length - 60));
+            // 날짜 오름차순 정렬 보장 (TradingView 필수)
+            const sorted = data.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            setChartData(sorted);
           } else {
             setChartData([]);
           }
@@ -51,15 +161,6 @@ export default function Home() {
       setChartData([]);
     }
   }, [selectedStock]);
-
-  // 기간 변경 버튼 핸들러
-  const handleRangeChange = (days: number) => {
-    if (days === 9999) {
-      setRangeStart(0); // 전체
-    } else {
-      setRangeStart(Math.max(0, chartData.length - days));
-    }
-  };
 
   const runAnalysis = async (fileNum: number) => {
     setLoading(true);
@@ -317,7 +418,7 @@ export default function Home() {
       </div>
 
       {/* ============================================================
-          ★ 상세 내역 모달 (업그레이드 버전)
+          ★ 상세 내역 모달 (TradingView 차트 적용)
          ============================================================ */}
       {selectedStock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedStock(null)}>
@@ -337,108 +438,16 @@ export default function Home() {
             {/* 모달 내용 */}
             <div className="p-5 overflow-y-auto flex-1 space-y-6">
               
-              {/* ★ 1. 기간 선택 버튼 (앱처럼 만들기) */}
-              <div className="flex gap-2 justify-end">
-                {[
-                  { label: "1개월", days: 20 },
-                  { label: "3개월", days: 60 },
-                  { label: "6개월", days: 120 },
-                  { label: "1년", days: 240 },
-                  { label: "전체", days: 9999 }
-                ].map((btn) => (
-                  <button
-                    key={btn.label}
-                    onClick={() => handleRangeChange(btn.days)}
-                    className="px-3 py-1.5 text-xs font-bold bg-gray-800 hover:bg-gray-700 text-gray-300 rounded border border-gray-700 transition-all active:scale-95"
-                  >
-                    {btn.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* ★ 2. 차트 영역 (우측 Y축 + 십자선 + 모바일 터치 고정) */}
-              <div 
-                className="h-[400px] w-full bg-gray-900 rounded-lg border border-gray-800 relative"
-                style={{ touchAction: "pan-y" }} // 모바일 스크롤 방지
-              >
+              {/* ★ 차트 영역 (TradingView) */}
+              <div className="h-[400px] w-full bg-gray-900 rounded-lg border border-gray-800 overflow-hidden relative">
                 {chartLoading ? (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
                     <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
                     <div>차트 데이터 로딩 중...</div>
                   </div>
                 ) : chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                      {/* 그리드: 세로선 제거, 가로선은 아주 흐리게 */}
-                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} opacity={0.5} />
-                      
-                      <XAxis 
-                        dataKey="date" 
-                        tick={{ fontSize: 10, fill: "#9ca3af" }} 
-                        tickFormatter={(val) => val.slice(2)} 
-                        minTickGap={50}
-                        axisLine={false}
-                        tickLine={false}
-                        dy={10}
-                      />
-                      
-                      {/* ★ Y축을 오른쪽(orientation="right")으로 이동 */}
-                      <YAxis 
-                        orientation="right"
-                        domain={['auto', 'auto']} 
-                        tick={{ fontSize: 10, fill: "#9ca3af" }}
-                        tickFormatter={(val) => `${(val / 10000).toFixed(0) > "0" ? (val/10000).toFixed(0)+"만" : val.toLocaleString()}`}
-                        width={50}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      
-                      {/* ★ 툴팁: 십자선 커서(cursor) 추가 */}
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: "rgba(17, 24, 39, 0.9)", borderColor: "#374151", color: "#f3f4f6", borderRadius: "8px", fontSize: "12px" }}
-                        itemStyle={{ padding: 0 }}
-                        formatter={(value: any) => value.toLocaleString()}
-                        labelFormatter={(label) => `📅 ${label}`}
-                        cursor={{ stroke: "#6b7280", strokeWidth: 1, strokeDasharray: "4 4" }} 
-                      />
-                      
-                      {/* 차트 그래픽 */}
-                      <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
-                      <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
-
-                      <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
-                      <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
-                      <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
-                      
-                      {/* 종가 라인: 더 두껍고 밝게 */}
-                      <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2.5} dot={false} name="종가" activeDot={{ r: 6, fill: "#fff" }} />
-
-                      {/* 매매 마커 */}
-                      {selectedStock.trade_history?.map((trade: any, idx: number) => (
-                        <ReferenceDot
-                          key={idx}
-                          x={trade.date}
-                          y={trade.price}
-                          r={4}
-                          fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
-                          stroke="#1f2937"
-                          strokeWidth={2}
-                        />
-                      ))}
-
-                      {/* ★ Brush: 미니맵처럼 하단에 얇게 배치 (버튼과 연동) */}
-                      <Brush 
-                        dataKey="date" 
-                        height={20} 
-                        stroke="#4b5563"
-                        fill="#1f2937"
-                        tickFormatter={() => ""} // Brush 내부 글자 제거
-                        startIndex={rangeStart}  // ★ state로 제어
-                        endIndex={chartData.length - 1}
-                      />
-                      
-                    </ComposedChart>
-                  </ResponsiveContainer>
+                  // 여기서 TradingView 컴포넌트 호출
+                  <TradingViewChart data={chartData} tradeHistory={selectedStock.trade_history} />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-500">
                     차트 데이터가 없습니다.
@@ -446,7 +455,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* 3. 요약 정보 */}
+              {/* 요약 정보 */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-gray-800 p-4 rounded-xl text-center border border-gray-700 shadow-inner">
                   <div className="text-xs text-gray-400 mb-1">현재가</div>
@@ -460,7 +469,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 4. 거래 내역 리스트 (디자인 다듬기) */}
+              {/* 거래 내역 리스트 */}
               <div>
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1">Transaction History</h3>
                 
@@ -475,7 +484,7 @@ export default function Home() {
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
                             log.type.includes("매수") ? "bg-red-900/20 text-red-500" : "bg-blue-900/20 text-blue-500"
                           }`}>
-                            {log.type.includes("매수") ? "Buy" : "Sell"}
+                            {log.type.includes("매수") ? "B" : "S"}
                           </div>
                           <div>
                             <div className="font-bold text-gray-200">{log.type}</div>
