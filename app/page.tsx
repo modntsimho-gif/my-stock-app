@@ -1,13 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { 
-  createChart, 
-  ColorType, 
-  CrosshairMode, 
-  LineStyle, 
-  LineSeries, 
-  AreaSeries 
-} from "lightweight-charts";
+import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
 
 // ============================================================================
@@ -44,15 +37,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
       crosshair: {
         mode: CrosshairMode.Normal,
       },
-      // 모바일 제스처 활성화
-      handleScale: {
-        axisPressedMouseMove: true,
-      },
-      handleScroll: {
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: true,
-      },
+      // v4에서는 handleScale, handleScroll이 기본적으로 최적화되어 있음
     });
 
     chartRef.current = chart;
@@ -63,40 +48,39 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 3. 시리즈 추가 (v5 문법: addSeries 사용)
+    // 3. 시리즈 추가 (v4 방식: addLineSeries, addAreaSeries 사용)
     
-    // (1) 볼린저 밴드 상단
-    const bbUpperSeries = chart.addSeries(LineSeries, { 
+    // (1) 볼린저 밴드
+    const bbUpperSeries = chart.addLineSeries({ 
       color: 'rgba(239, 68, 68, 0.5)', 
       lineWidth: 1, 
       lineStyle: LineStyle.Dashed 
     });
     bbUpperSeries.setData(bbUpData);
     
-    // (2) 볼린저 밴드 하단
-    const bbLowerSeries = chart.addSeries(LineSeries, { 
+    const bbLowerSeries = chart.addLineSeries({ 
       color: 'rgba(59, 130, 246, 0.5)', 
       lineWidth: 1, 
       lineStyle: LineStyle.Dashed 
     });
     bbLowerSeries.setData(bbDownData);
 
-    // (3) MA20 (중심선)
-    const maSeries = chart.addSeries(LineSeries, { 
+    // (2) MA20
+    const maSeries = chart.addLineSeries({ 
       color: '#fbbf24', 
       lineWidth: 1 
     });
     maSeries.setData(ma20Data);
 
-    // (4) 종가 (메인 - 영역형)
-    const mainSeries = chart.addSeries(AreaSeries, {
+    // (3) 종가 (메인 - 영역형)
+    const mainSeries = chart.addAreaSeries({
       topColor: 'rgba(34, 197, 94, 0.56)',
       bottomColor: 'rgba(34, 197, 94, 0.04)',
       lineColor: '#4ade80',
       lineWidth: 2,
     });
     mainSeries.setData(lineData);
-
+    
     // 4. 매매 마커 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => ({
@@ -108,8 +92,8 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         size: 1,
       }));
       
-      // ★ (mainSeries as any)로 감싸서 빨간줄 강제 제거
-      (mainSeries as any).setMarkers(markers);
+      // ★ 여기에 'as any'를 붙여서 빨간줄 제거
+      mainSeries.setMarkers(markers as any[]);
     }
 
     // 5. 리사이즈 핸들러
@@ -120,7 +104,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     };
     window.addEventListener('resize', handleResize);
 
-    // 6. 초기 줌 설정 (최근 60일)
+    // 6. 초기 줌 설정
     if(data.length > 60) {
         const visibleRange = {
             from: data[data.length - 60].date,
@@ -143,9 +127,6 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
 
   return <div ref={chartContainerRef} className="w-full h-full" />;
 };
-
-
-
 
 // ============================================================================
 // ★ 메인 페이지 컴포넌트
