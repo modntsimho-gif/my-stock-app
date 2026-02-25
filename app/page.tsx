@@ -23,6 +23,9 @@ export default function Home() {
   const [selectedStock, setSelectedStock] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
+  
+  // ★ 차트 기간 제어용 State (기본값: 최근 60일)
+  const [rangeStart, setRangeStart] = useState<number>(0);
 
   // ★ 모달이 열릴 때(selectedStock 변경 시) 차트 데이터 가져오기
   useEffect(() => {
@@ -33,6 +36,8 @@ export default function Home() {
         .then((data) => {
           if (Array.isArray(data)) {
             setChartData(data);
+            // 데이터 로딩 직후 기본 3개월(60일)치 보여주기
+            setRangeStart(Math.max(0, data.length - 60));
           } else {
             setChartData([]);
           }
@@ -47,7 +52,15 @@ export default function Home() {
     }
   }, [selectedStock]);
 
-  // 👇 [수정] fileNum 인자를 받도록 변경
+  // 기간 변경 버튼 핸들러
+  const handleRangeChange = (days: number) => {
+    if (days === 9999) {
+      setRangeStart(0); // 전체
+    } else {
+      setRangeStart(Math.max(0, chartData.length - days));
+    }
+  };
+
   const runAnalysis = async (fileNum: number) => {
     setLoading(true);
     setResult(null);
@@ -55,7 +68,6 @@ export default function Home() {
     setProgress({ current: 0, total: 0 });
 
     try {
-      // 👇 [수정] URL에 file 파라미터 추가 (?file=1 또는 ?file=2)
       const response = await fetch(`/api/analyze?file=${fileNum}`);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -113,10 +125,7 @@ export default function Home() {
 
         {/* 컨트롤 패널 */}
         <div>
-          {/* 👇 [수정] 버튼 2개를 가로로 배치 */}
           <div className="flex flex-col md:flex-row gap-2">
-            
-            {/* 버튼 1: 대상티커.xlsx */}
             <button
               onClick={() => runAnalysis(1)}
               disabled={loading}
@@ -129,7 +138,6 @@ export default function Home() {
               {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 (기본)"}
             </button>
 
-            {/* 버튼 2: 대상티커2.xlsx */}
             <button
               onClick={() => runAnalysis(2)}
               disabled={loading}
@@ -309,7 +317,7 @@ export default function Home() {
       </div>
 
       {/* ============================================================
-          ★ 상세 내역 모달 (차트 + 거래내역)
+          ★ 상세 내역 모달 (업그레이드 버전)
          ============================================================ */}
       {selectedStock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedStock(null)}>
@@ -326,132 +334,158 @@ export default function Home() {
               <button onClick={() => setSelectedStock(null)} className="text-gray-400 hover:text-white p-2">✕</button>
             </div>
 
-            {/* 모달 내용 (스크롤 가능) */}
+            {/* 모달 내용 */}
             <div className="p-5 overflow-y-auto flex-1 space-y-6">
               
-            {/* 1. 차트 영역 */}
-            {/* 👇 [수정 1] touch-action: pan-y 스타일 추가 (좌우 터치는 차트가, 상하 터치는 스크롤이 담당) */}
-            <div 
-              className="h-[400px] w-full bg-gray-800/30 rounded-lg border border-gray-700/50 p-2 relative"
-              style={{ touchAction: "pan-y" }} 
-            >
-              {chartLoading ? (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
-                  <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
-                  <div>차트 데이터 로딩 중...</div>
-                </div>
-              ) : chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                    <XAxis 
-                      dataKey="date" 
-                      tick={{ fontSize: 10, fill: "#666" }} 
-                      tickFormatter={(val) => val.slice(2)} 
-                      minTickGap={30}
-                    />
-                    <YAxis 
-                      domain={['auto', 'auto']} 
-                      tick={{ fontSize: 10, fill: "#666" }}
-                      tickFormatter={(val) => `${val.toLocaleString()}`}
-                      width={40} // 모바일 공간 확보를 위해 너비 약간 축소
-                    />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: "#1f2937", borderColor: "#374151", color: "#f3f4f6" }}
-                      itemStyle={{ fontSize: "12px" }}
-                      formatter={(value: any) => value.toLocaleString()}
-                      labelFormatter={(label) => `📅 ${label}`}
-                    />
-                    
-                    <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
-                    <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
+              {/* ★ 1. 기간 선택 버튼 (앱처럼 만들기) */}
+              <div className="flex gap-2 justify-end">
+                {[
+                  { label: "1개월", days: 20 },
+                  { label: "3개월", days: 60 },
+                  { label: "6개월", days: 120 },
+                  { label: "1년", days: 240 },
+                  { label: "전체", days: 9999 }
+                ].map((btn) => (
+                  <button
+                    key={btn.label}
+                    onClick={() => handleRangeChange(btn.days)}
+                    className="px-3 py-1.5 text-xs font-bold bg-gray-800 hover:bg-gray-700 text-gray-300 rounded border border-gray-700 transition-all active:scale-95"
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
 
-                    <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
-                    <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
-                    <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
-                    <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2} dot={false} name="종가" />
-
-                    {selectedStock.trade_history?.map((trade: any, idx: number) => (
-                      <ReferenceDot
-                        key={idx}
-                        x={trade.date}
-                        y={trade.price}
-                        r={5}
-                        fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
-                        stroke="#fff"
-                        strokeWidth={1}
+              {/* ★ 2. 차트 영역 (우측 Y축 + 십자선 + 모바일 터치 고정) */}
+              <div 
+                className="h-[400px] w-full bg-gray-900 rounded-lg border border-gray-800 relative"
+                style={{ touchAction: "pan-y" }} // 모바일 스크롤 방지
+              >
+                {chartLoading ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 flex-col gap-2">
+                    <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div>차트 데이터 로딩 중...</div>
+                  </div>
+                ) : chartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                      {/* 그리드: 세로선 제거, 가로선은 아주 흐리게 */}
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} opacity={0.5} />
+                      
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{ fontSize: 10, fill: "#9ca3af" }} 
+                        tickFormatter={(val) => val.slice(2)} 
+                        minTickGap={50}
+                        axisLine={false}
+                        tickLine={false}
+                        dy={10}
                       />
-                    ))}
+                      
+                      {/* ★ Y축을 오른쪽(orientation="right")으로 이동 */}
+                      <YAxis 
+                        orientation="right"
+                        domain={['auto', 'auto']} 
+                        tick={{ fontSize: 10, fill: "#9ca3af" }}
+                        tickFormatter={(val) => `${(val / 10000).toFixed(0) > "0" ? (val/10000).toFixed(0)+"만" : val.toLocaleString()}`}
+                        width={50}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      
+                      {/* ★ 툴팁: 십자선 커서(cursor) 추가 */}
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "rgba(17, 24, 39, 0.9)", borderColor: "#374151", color: "#f3f4f6", borderRadius: "8px", fontSize: "12px" }}
+                        itemStyle={{ padding: 0 }}
+                        formatter={(value: any) => value.toLocaleString()}
+                        labelFormatter={(label) => `📅 ${label}`}
+                        cursor={{ stroke: "#6b7280", strokeWidth: 1, strokeDasharray: "4 4" }} 
+                      />
+                      
+                      {/* 차트 그래픽 */}
+                      <Area type="monotone" dataKey="bb_upper" stroke="none" fill="#374151" fillOpacity={0.1} />
+                      <Area type="monotone" dataKey="bb_lower" stroke="none" fill="#374151" fillOpacity={0.1} />
 
-                    {/* 👇 [수정 2] Brush 크기 확대 및 터치 영역 개선 */}
-                    <Brush 
-                      dataKey="date" 
-                      height={40}          // 높이를 30 -> 40으로 키움 (터치 영역 확보)
-                      travellerWidth={20}  // 양쪽 핸들(잡는 부분) 너비 확대
-                      stroke="#8884d8"
-                      fill="#1f2937"       // 슬라이더 배경색 추가 (시인성 확보)
-                      startIndex={Math.max(0, chartData.length - 60)} // 모바일은 화면이 좁으니 60일치만 먼저 보여줌
-                      endIndex={chartData.length - 1}
-                    />
-                    
-                  </ComposedChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-500">
-                  차트 데이터가 없습니다.
-                </div>
-              )}
-            </div>
+                      <Line type="monotone" dataKey="bb_upper" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="상단" />
+                      <Line type="monotone" dataKey="ma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="중심선" />
+                      <Line type="monotone" dataKey="bb_lower" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} name="하단" />
+                      
+                      {/* 종가 라인: 더 두껍고 밝게 */}
+                      <Line type="monotone" dataKey="close" stroke="#fff" strokeWidth={2.5} dot={false} name="종가" activeDot={{ r: 6, fill: "#fff" }} />
 
-              {/* 2. 요약 정보 */}
+                      {/* 매매 마커 */}
+                      {selectedStock.trade_history?.map((trade: any, idx: number) => (
+                        <ReferenceDot
+                          key={idx}
+                          x={trade.date}
+                          y={trade.price}
+                          r={4}
+                          fill={trade.type.includes("매수") ? "#ef4444" : "#3b82f6"}
+                          stroke="#1f2937"
+                          strokeWidth={2}
+                        />
+                      ))}
+
+                      {/* ★ Brush: 미니맵처럼 하단에 얇게 배치 (버튼과 연동) */}
+                      <Brush 
+                        dataKey="date" 
+                        height={20} 
+                        stroke="#4b5563"
+                        fill="#1f2937"
+                        tickFormatter={() => ""} // Brush 내부 글자 제거
+                        startIndex={rangeStart}  // ★ state로 제어
+                        endIndex={chartData.length - 1}
+                      />
+                      
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                    차트 데이터가 없습니다.
+                  </div>
+                )}
+              </div>
+
+              {/* 3. 요약 정보 */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-800 p-3 rounded-lg text-center border border-gray-700">
-                  <div className="text-xs text-gray-500">현재가</div>
-                  <div className="font-bold text-lg">{selectedStock.current_price.toLocaleString()}원</div>
+                <div className="bg-gray-800 p-4 rounded-xl text-center border border-gray-700 shadow-inner">
+                  <div className="text-xs text-gray-400 mb-1">현재가</div>
+                  <div className="font-bold text-xl text-white tracking-wide">{selectedStock.current_price.toLocaleString()}원</div>
                 </div>
-                <div className="bg-gray-800 p-3 rounded-lg text-center border border-gray-700">
-                  <div className="text-xs text-gray-500">수익률</div>
-                  <div className={`font-bold text-lg ${selectedStock.return_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                <div className="bg-gray-800 p-4 rounded-xl text-center border border-gray-700 shadow-inner">
+                  <div className="text-xs text-gray-400 mb-1">수익률</div>
+                  <div className={`font-bold text-xl tracking-wide ${selectedStock.return_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
                     {selectedStock.return_rate ? selectedStock.return_rate.toFixed(2) : 0}%
                   </div>
                 </div>
               </div>
 
-              {/* 3. 거래 내역 리스트 */}
+              {/* 4. 거래 내역 리스트 (디자인 다듬기) */}
               <div>
-                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Transaction History</h3>
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1">Transaction History</h3>
                 
                 {(!selectedStock.trade_history || selectedStock.trade_history.length === 0) ? (
-                  <div className="text-center text-gray-600 py-8 text-sm">거래 내역이 없습니다.</div>
+                  <div className="text-center text-gray-600 py-8 text-sm bg-gray-800/30 rounded-lg">거래 내역이 없습니다.</div>
                 ) : (
                   <div className="space-y-2">
                     {selectedStock.trade_history.map((log: any, idx: number) => (
-                      <div key={idx} className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 flex justify-between items-center text-sm hover:bg-gray-800 transition-colors">
+                      <div key={idx} className="bg-gray-800 p-3 rounded-xl border border-gray-700 flex justify-between items-center text-sm shadow-sm">
                         
-                        {/* 왼쪽: 날짜 및 타입 */}
-                        <div>
-                          <div className="text-xs text-gray-500 mb-0.5">{log.date}</div>
-                          <div className="flex items-center gap-2">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              log.type.includes("매수") 
-                                ? "bg-red-900/30 text-red-300 border border-red-800" 
-                                : "bg-blue-900/30 text-blue-300 border border-blue-800"
-                            }`}>
-                              {log.type}
-                            </span>
-                            <span className="text-gray-300 text-xs">{log.detail}</span>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
+                            log.type.includes("매수") ? "bg-red-900/20 text-red-500" : "bg-blue-900/20 text-blue-500"
+                          }`}>
+                            {log.type.includes("매수") ? "Buy" : "Sell"}
+                          </div>
+                          <div>
+                            <div className="font-bold text-gray-200">{log.type}</div>
+                            <div className="text-xs text-gray-500">{log.date} · {log.detail}</div>
                           </div>
                         </div>
 
-                        {/* 오른쪽: 가격 및 수량 */}
                         <div className="text-right">
                           <div className="font-bold text-gray-200">{parseInt(log.price).toLocaleString()}원</div>
                           <div className="text-xs text-gray-500">{log.qty}주</div>
-                          {log.profit_rate !== 0 && (
-                            <div className={`text-xs font-bold mt-1 ${log.profit_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                              {log.profit_rate > 0 ? "+" : ""}{log.profit_rate.toFixed(1)}%
-                            </div>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -462,7 +496,7 @@ export default function Home() {
 
             {/* 모달 푸터 */}
             <div className="p-4 border-t border-gray-800 bg-gray-900 text-center">
-              <button onClick={() => setSelectedStock(null)} className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 py-3 rounded-lg transition-colors font-bold">
+              <button onClick={() => setSelectedStock(null)} className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 py-3 rounded-xl transition-colors font-bold">
                 닫기
               </button>
             </div>
