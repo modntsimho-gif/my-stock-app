@@ -3,16 +3,30 @@ import { useState, useEffect, useRef } from "react";
 import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
 // ============================================================================
-// ★ TradingView 차트 컴포넌트 (모바일/모달 최적화 수정판)
+// ★ TradingView 차트 컴포넌트 (100% Canvas 방식, SVG 없음)
 // ============================================================================
 const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: any[] }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
+  
+  // 브라우저 마운트 여부 확인 (서버 사이드 렌더링 방지)
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    if (!chartContainerRef.current || data.length === 0) return;
+    setIsMounted(true);
+  }, []);
 
-    // 1. 차트 생성
+  useEffect(() => {
+    // 1. 방어 코드: 브라우저가 아니거나 데이터가 없으면 중단
+    if (!isMounted || !chartContainerRef.current || data.length === 0) return;
+
+    // 2. 기존 차트가 있다면 삭제 (중복 생성 및 잔상 방지)
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
+    // 3. 차트 생성 (HTML Canvas)
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -22,8 +36,8 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         vertLines: { color: '#374151', style: LineStyle.Dotted },
         horzLines: { color: '#374151', style: LineStyle.Dotted },
       },
-      // 초기 너비를 부모 컨테이너에 맞춤 (없으면 0이 되지 않도록 기본값 설정)
-      width: chartContainerRef.current.clientWidth || 300,
+      // 초기 크기는 컨테이너에 맞춤
+      width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
       rightPriceScale: {
         borderColor: '#374151',
@@ -41,13 +55,13 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
 
     chartRef.current = chart;
 
-    // 2. 데이터 변환
+    // 4. 데이터 변환
     const lineData = data.map(d => ({ time: d.date, value: d.close }));
     const ma20Data = data.map(d => ({ time: d.date, value: d.ma20 })).filter(d => d.value);
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 3. 시리즈 추가
+    // 5. 시리즈 추가
     
     // (1) 볼린저 밴드
     const bbUpperSeries = chart.addLineSeries({ 
@@ -80,7 +94,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     });
     mainSeries.setData(lineData);
     
-    // 4. 매매 마커 표시
+    // 6. 매매 마커 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => ({
         time: t.date,
@@ -94,25 +108,20 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
       mainSeries.setMarkers(markers as any[]);
     }
 
-    // 5. ★ ResizeObserver 적용 (모바일 모달 애니메이션 대응)
-    // 모달이 열리면서 div 크기가 변하는 것을 감지해 차트 크기를 맞춤
+    // 7. ResizeObserver (모바일/모달 크기 변화 실시간 감지)
     const resizeObserver = new ResizeObserver((entries) => {
       if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
       
       const newRect = entries[0].contentRect;
+      if (newRect.width === 0 || newRect.height === 0) return;
+
       chart.applyOptions({ width: newRect.width, height: newRect.height });
-      
-      // 크기 변경 후 데이터가 꽉 차게 조정
-      try {
-        chart.timeScale().fitContent(); 
-      } catch(e) {}
+      try { chart.timeScale().fitContent(); } catch(e) {}
     });
 
-    if (chartContainerRef.current) {
-      resizeObserver.observe(chartContainerRef.current);
-    }
+    resizeObserver.observe(chartContainerRef.current);
 
-    // 6. 초기 줌 설정
+    // 8. 초기 줌 설정
     if(data.length > 60) {
         const visibleRange = {
             from: data[data.length - 60].date,
@@ -129,9 +138,15 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
 
     return () => {
       resizeObserver.disconnect();
-      chart.remove();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
     };
-  }, [data, tradeHistory]);
+  }, [data, tradeHistory, isMounted]);
+
+  // 로딩 전에는 깜빡임 방지용 빈 박스
+  if (!isMounted) return <div className="w-full h-full bg-gray-900/50 animate-pulse rounded-lg" />;
 
   return <div ref={chartContainerRef} className="w-full h-full relative" />;
 };
