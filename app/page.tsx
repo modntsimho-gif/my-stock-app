@@ -2,9 +2,8 @@
 import { useState, useEffect, useRef } from "react";
 import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
-
 // ============================================================================
-// ★ TradingView 차트 컴포넌트 (분리형)
+// ★ TradingView 차트 컴포넌트 (모바일/모달 최적화 수정판)
 // ============================================================================
 const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: any[] }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -23,8 +22,9 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         vertLines: { color: '#374151', style: LineStyle.Dotted },
         horzLines: { color: '#374151', style: LineStyle.Dotted },
       },
-      width: chartContainerRef.current.clientWidth,
-      height: 400,
+      // 초기 너비를 부모 컨테이너에 맞춤 (없으면 0이 되지 않도록 기본값 설정)
+      width: chartContainerRef.current.clientWidth || 300,
+      height: chartContainerRef.current.clientHeight || 400,
       rightPriceScale: {
         borderColor: '#374151',
         scaleMargins: { top: 0.1, bottom: 0.1 },
@@ -37,7 +37,6 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
       crosshair: {
         mode: CrosshairMode.Normal,
       },
-      // v4에서는 handleScale, handleScroll이 기본적으로 최적화되어 있음
     });
 
     chartRef.current = chart;
@@ -48,7 +47,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 3. 시리즈 추가 (v4 방식: addLineSeries, addAreaSeries 사용)
+    // 3. 시리즈 추가
     
     // (1) 볼린저 밴드
     const bbUpperSeries = chart.addLineSeries({ 
@@ -92,17 +91,26 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         size: 1,
       }));
       
-      // ★ 여기에 'as any'를 붙여서 빨간줄 제거
       mainSeries.setMarkers(markers as any[]);
     }
 
-    // 5. 리사이즈 핸들러
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener('resize', handleResize);
+    // 5. ★ ResizeObserver 적용 (모바일 모달 애니메이션 대응)
+    // 모달이 열리면서 div 크기가 변하는 것을 감지해 차트 크기를 맞춤
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
+      
+      const newRect = entries[0].contentRect;
+      chart.applyOptions({ width: newRect.width, height: newRect.height });
+      
+      // 크기 변경 후 데이터가 꽉 차게 조정
+      try {
+        chart.timeScale().fitContent(); 
+      } catch(e) {}
+    });
+
+    if (chartContainerRef.current) {
+      resizeObserver.observe(chartContainerRef.current);
+    }
 
     // 6. 초기 줌 설정
     if(data.length > 60) {
@@ -120,12 +128,12 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     }
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       chart.remove();
     };
   }, [data, tradeHistory]);
 
-  return <div ref={chartContainerRef} className="w-full h-full" />;
+  return <div ref={chartContainerRef} className="w-full h-full relative" />;
 };
 
 // ============================================================================
@@ -148,7 +156,6 @@ export default function Home() {
         .then((res) => res.json())
         .then((data) => {
           if (Array.isArray(data)) {
-            // 날짜 오름차순 정렬 보장 (TradingView 필수)
             const sorted = data.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
             setChartData(sorted);
           } else {
@@ -449,8 +456,12 @@ export default function Home() {
                     <div>차트 데이터 로딩 중...</div>
                   </div>
                 ) : chartData.length > 0 ? (
-                  // 여기서 TradingView 컴포넌트 호출
-                  <TradingViewChart data={chartData} tradeHistory={selectedStock.trade_history} />
+                  // ★ [수정] key 속성을 추가하여 종목 변경 시 차트 완전 초기화
+                  <TradingViewChart 
+                    key={selectedStock.ticker} 
+                    data={chartData} 
+                    tradeHistory={selectedStock.trade_history} 
+                  />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-500">
                     차트 데이터가 없습니다.
