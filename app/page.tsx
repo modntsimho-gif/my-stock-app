@@ -17,16 +17,13 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
   }, []);
 
   useEffect(() => {
-    // 1. 방어 코드: 브라우저가 아니거나 데이터가 없으면 중단
     if (!isMounted || !chartContainerRef.current || data.length === 0) return;
 
-    // 2. 기존 차트가 있다면 삭제 (중복 생성 및 잔상 방지)
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
     }
 
-    // 3. 차트 생성 (HTML Canvas)
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -36,7 +33,6 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         vertLines: { color: '#374151', style: LineStyle.Dotted },
         horzLines: { color: '#374151', style: LineStyle.Dotted },
       },
-      // 초기 크기는 컨테이너에 맞춤
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
       rightPriceScale: {
@@ -55,37 +51,24 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
 
     chartRef.current = chart;
 
-    // 4. 데이터 변환
     const lineData = data.map(d => ({ time: d.date, value: d.close }));
     const ma20Data = data.map(d => ({ time: d.date, value: d.ma20 })).filter(d => d.value);
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 5. 시리즈 추가
-    
-    // (1) 볼린저 밴드
     const bbUpperSeries = chart.addLineSeries({ 
-      color: 'rgba(239, 68, 68, 0.5)', 
-      lineWidth: 1, 
-      lineStyle: LineStyle.Dashed 
+      color: 'rgba(239, 68, 68, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed 
     });
     bbUpperSeries.setData(bbUpData);
     
     const bbLowerSeries = chart.addLineSeries({ 
-      color: 'rgba(59, 130, 246, 0.5)', 
-      lineWidth: 1, 
-      lineStyle: LineStyle.Dashed 
+      color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed 
     });
     bbLowerSeries.setData(bbDownData);
 
-    // (2) MA20
-    const maSeries = chart.addLineSeries({ 
-      color: '#fbbf24', 
-      lineWidth: 1 
-    });
+    const maSeries = chart.addLineSeries({ color: '#fbbf24', lineWidth: 1 });
     maSeries.setData(ma20Data);
 
-    // (3) 종가 (메인 - 영역형)
     const mainSeries = chart.addAreaSeries({
       topColor: 'rgba(34, 197, 94, 0.56)',
       bottomColor: 'rgba(34, 197, 94, 0.04)',
@@ -94,7 +77,6 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     });
     mainSeries.setData(lineData);
     
-    // 6. 매매 마커 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => ({
         time: t.date,
@@ -104,34 +86,26 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
         text: t.type.includes("매수") ? 'B' : 'S',
         size: 1,
       }));
-      
       mainSeries.setMarkers(markers as any[]);
     }
 
-    // 7. ResizeObserver (모바일/모달 크기 변화 실시간 감지)
     const resizeObserver = new ResizeObserver((entries) => {
       if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
-      
       const newRect = entries[0].contentRect;
       if (newRect.width === 0 || newRect.height === 0) return;
-
       chart.applyOptions({ width: newRect.width, height: newRect.height });
       try { chart.timeScale().fitContent(); } catch(e) {}
     });
 
     resizeObserver.observe(chartContainerRef.current);
 
-    // 8. 초기 줌 설정
     if(data.length > 60) {
         const visibleRange = {
             from: data[data.length - 60].date,
             to: data[data.length - 1].date
         };
-        try {
-            chart.timeScale().setVisibleRange(visibleRange);
-        } catch(e) {
-            chart.timeScale().fitContent();
-        }
+        try { chart.timeScale().setVisibleRange(visibleRange); } 
+        catch(e) { chart.timeScale().fitContent(); }
     } else {
         chart.timeScale().fitContent();
     }
@@ -145,9 +119,7 @@ const TradingViewChart = ({ data, tradeHistory }: { data: any[], tradeHistory: a
     };
   }, [data, tradeHistory, isMounted]);
 
-  // 로딩 전에는 깜빡임 방지용 빈 박스
   if (!isMounted) return <div className="w-full h-full bg-gray-900/50 animate-pulse rounded-lg" />;
-
   return <div ref={chartContainerRef} className="w-full h-full relative" />;
 };
 
@@ -163,6 +135,18 @@ export default function Home() {
   const [selectedStock, setSelectedStock] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
+
+  // 오늘 날짜 구하기 (YYYY-MM-DD)
+  const getTodayString = () => {
+    // 한국 시간 기준
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const koreaTimeDiff = 9 * 60 * 60 * 1000;
+    const korNow = new Date(utc + koreaTimeDiff);
+    return korNow.toISOString().split('T')[0];
+  };
+
+  const todayStr = getTodayString();
 
   useEffect(() => {
     if (selectedStock) {
@@ -241,6 +225,22 @@ export default function Home() {
     }
   };
 
+  // 데이터 분류 로직
+  let todayBuys: any[] = [];
+  let holdings: any[] = [];
+  let todaySells: any[] = [];
+
+  if (result) {
+    // 1. 당일 매수: 보유 목록 중 매수일이 오늘인 것
+    todayBuys = result.holding_list.filter((item: any) => item.first_buy_date === todayStr);
+    
+    // 2. 보유 중: 보유 목록 중 매수일이 오늘이 아닌 것
+    holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
+    
+    // 3. 당일 매도: 익절 + 손절 리스트 합치기
+    todaySells = [...result.profit_list, ...result.loss_list];
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans md:font-mono text-sm pb-10 relative">
       {/* 헤더 영역 */}
@@ -291,18 +291,117 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
-            {/* 1. 보유 종목 */}
+            {/* ============================================================
+                1. 당일 매수 건 (NEW)
+               ============================================================ */}
             <section>
-              <h2 className="text-lg md:text-xl font-bold text-red-400 mb-3 flex items-center justify-between">
-                <span>🔥 보유 중인 종목</span>
-                <span className="bg-red-900/50 text-red-300 text-xs px-2 py-1 rounded-full">{result.holding_list.length}개</span>
+              <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span className="text-red-500">🚀 당일 매수 체결</span>
+                <span className="bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full">NEW</span>
+                <span className="text-xs text-gray-500 font-normal ml-auto">기준일: {todayStr}</span>
               </h2>
               
-              {result.holding_list.length === 0 ? (
-                <div className="p-8 text-center bg-gray-800 rounded-lg text-gray-500 border border-gray-700">보유 종목이 없습니다.</div>
+              {todayBuys.length === 0 ? (
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">
+                  오늘 매수한 종목이 없습니다.
+                </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {result.holding_list.map((item: any) => {
+                  {todayBuys.map((item: any) => {
+                     const rate = ((item.current_price - item.avg_price) / item.avg_price) * 100;
+                     return (
+                      <div 
+                        key={item.ticker} 
+                        onClick={() => setSelectedStock(item)}
+                        className="bg-gray-800 p-4 rounded-xl border-2 border-red-500/30 shadow-lg relative overflow-hidden cursor-pointer hover:bg-gray-750 hover:border-red-500 transition-all"
+                      >
+                        <div className="absolute top-0 right-0 bg-red-600 text-white text-[10px] px-2 py-1 rounded-bl-lg font-bold">Today Buy</div>
+                        <div className="flex justify-between items-start mb-2 pl-1">
+                          <div>
+                            <div className="font-bold text-base text-gray-100">{item.stock_name}</div>
+                            <div className="text-xs text-gray-500">{item.ticker}</div>
+                          </div>
+                          <div className={`text-lg font-bold ${rate > 0 ? "text-red-400" : "text-blue-400"}`}>
+                            {rate > 0 ? "+" : ""}{rate.toFixed(2)}%
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs text-gray-400 bg-gray-900/30 p-2 rounded">
+                          <div>평단: <span className="text-gray-200">{parseInt(item.avg_price).toLocaleString()}</span></div>
+                          <div>현재: <span className="text-gray-200">{item.current_price.toLocaleString()}</span></div>
+                        </div>
+                      </div>
+                     )
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* ============================================================
+                2. 당일 매도 건 (익절/손절)
+               ============================================================ */}
+            <section>
+              <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span className="text-blue-400">💸 당일 매도 체결</span>
+                <span className="bg-blue-900/50 text-blue-300 text-xs px-2 py-0.5 rounded-full">{todaySells.length}건</span>
+              </h2>
+
+              {todaySells.length === 0 ? (
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">
+                  오늘 매도한 종목이 없습니다.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {todaySells.map((item: any) => {
+                    const isProfit = item.return_rate > 0;
+                    const netProfit = item.final_asset ? item.final_asset - 10000000 : 0; // 예시 계산
+                    
+                    return (
+                      <div 
+                        key={item.ticker} 
+                        onClick={() => setSelectedStock(item)}
+                        className={`bg-gray-800 p-4 rounded-xl border ${isProfit ? 'border-green-800' : 'border-blue-900'} flex justify-between items-center cursor-pointer hover:bg-gray-750 transition-all`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-bold text-gray-100">{item.stock_name}</div>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${isProfit ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'}`}>
+                              {isProfit ? '익절' : '손절'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {isProfit ? '수익금:' : '손실금:'} <span className={isProfit ? "text-red-400" : "text-blue-400"}>
+                              {netProfit !== 0 ? `${parseInt(netProfit.toString()).toLocaleString()}원` : '-'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                           <div className={`text-xl font-bold ${isProfit ? 'text-red-500' : 'text-blue-500'}`}>
+                             {item.return_rate > 0 ? "+" : ""}{item.return_rate.toFixed(1)}%
+                           </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* ============================================================
+                3. 보유 중인 종목 (기존 보유)
+               ============================================================ */}
+            <section>
+              <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span className="text-gray-300">💼 보유 중인 종목</span>
+                <span className="bg-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded-full">{holdings.length}개</span>
+              </h2>
+              
+              {holdings.length === 0 ? (
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">
+                  기존 보유 종목이 없습니다.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {holdings.map((item: any) => {
                      const rate = ((item.current_price - item.avg_price) / item.avg_price) * 100;
                      return (
                       <div 
@@ -323,7 +422,7 @@ export default function Home() {
                         <div className="grid grid-cols-2 gap-2 text-xs text-gray-400 pl-2 bg-gray-900/30 p-2 rounded">
                           <div>평단: <span className="text-gray-200">{parseInt(item.avg_price).toLocaleString()}</span></div>
                           <div>현재: <span className="text-gray-200">{item.current_price.toLocaleString()}</span></div>
-                          <div>매수: {item.first_buy_date}</div>
+                          <div>매수일: {item.first_buy_date}</div>
                           <div>물타기: {item.buy_count}회</div>
                         </div>
                       </div>
@@ -333,15 +432,17 @@ export default function Home() {
               )}
             </section>
 
-            {/* 2. 매수 대기 */}
-            <section>
-              <h2 className="text-lg md:text-xl font-bold text-yellow-400 mb-3 flex items-center justify-between">
+            {/* ============================================================
+                4. 매수 대기 (기타)
+               ============================================================ */}
+            <section className="opacity-80 hover:opacity-100 transition-opacity">
+              <h2 className="text-lg md:text-xl font-bold text-yellow-400 mb-3 flex items-center justify-between border-b border-gray-700 pb-2">
                 <span>⏳ 매수 대기 (BB하단 접근)</span>
                 <span className="bg-yellow-900/50 text-yellow-300 text-xs px-2 py-1 rounded-full">{result.waiting_list.length}개</span>
               </h2>
 
               {result.waiting_list.length === 0 ? (
-                <div className="p-8 text-center bg-gray-800 rounded-lg text-gray-500 border border-gray-700">대기 중인 종목이 없습니다.</div>
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">대기 중인 종목이 없습니다.</div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {result.waiting_list.map((item: any) => (
@@ -375,59 +476,6 @@ export default function Home() {
               )}
             </section>
 
-            {/* 3. 익절 완료 */}
-            <section>
-              <h2 className="text-lg md:text-xl font-bold text-green-400 mb-3 flex items-center justify-between">
-                <span>🏆 익절 완료 종목</span>
-                <span className="bg-green-900/50 text-green-300 text-xs px-2 py-1 rounded-full">{result.profit_list.length}개</span>
-              </h2>
-
-              {result.profit_list.length === 0 ? (
-                <div className="p-8 text-center bg-gray-800 rounded-lg text-gray-500 border border-gray-700">수익 실현 종목이 없습니다.</div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {result.profit_list.map((item: any) => {
-                    const netProfit = item.final_asset - 10000000;
-                    return (
-                      <div 
-                        key={item.ticker} 
-                        onClick={() => setSelectedStock(item)}
-                        className="bg-gray-800 p-4 rounded-xl border border-gray-700 flex justify-between items-center cursor-pointer hover:border-green-500 transition-all"
-                      >
-                        <div>
-                          <div className="font-bold text-gray-100">{item.stock_name}</div>
-                          <div className="text-xs text-gray-500">순수익: <span className="text-red-400">+{parseInt(netProfit.toString()).toLocaleString()}원</span></div>
-                        </div>
-                        <div className="text-right">
-                           <div className="text-2xl font-bold text-red-500">+{item.return_rate.toFixed(1)}%</div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-
-            {/* 4. 손실 종목 */}
-            {result.loss_list.length > 0 && (
-              <section>
-                <h2 className="text-lg md:text-xl font-bold text-blue-400 mb-3">
-                  💀 손실 발생 종목 ({result.loss_list.length}개)
-                </h2>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {result.loss_list.map((item: any) => (
-                    <div 
-                      key={item.ticker} 
-                      onClick={() => setSelectedStock(item)}
-                      className="bg-gray-800/50 p-3 rounded border border-gray-700 flex justify-between items-center text-sm cursor-pointer hover:bg-gray-700"
-                    >
-                      <span className="text-gray-300 truncate mr-2">{item.stock_name}</span>
-                      <span className="text-blue-400 font-bold whitespace-nowrap">{item.return_rate.toFixed(2)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
           </>
         )}
 
@@ -471,7 +519,6 @@ export default function Home() {
                     <div>차트 데이터 로딩 중...</div>
                   </div>
                 ) : chartData.length > 0 ? (
-                  // ★ [수정] key 속성을 추가하여 종목 변경 시 차트 완전 초기화
                   <TradingViewChart 
                     key={selectedStock.ticker} 
                     data={chartData} 
