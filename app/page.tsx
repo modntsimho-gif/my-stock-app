@@ -100,7 +100,7 @@ export default function Home() {
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
 
-  // 오늘 날짜 구하기 (YYYY-MM-DD)
+  // 오늘 날짜 구하기 (YYYY-MM-DD) - 한국 시간 기준
   const getTodayString = () => {
     const now = new Date();
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -163,7 +163,7 @@ export default function Home() {
     } catch (err) { alert("통신 중 에러 발생"); console.error(err); } finally { setLoading(false); }
   };
 
-  // ★ 데이터 분류 로직 (날짜 필터링 추가)
+  // ★ 데이터 분류 로직 (날짜 필터링 강화)
   let todayBuys: any[] = [];
   let holdings: any[] = [];
   let todaySells: any[] = [];
@@ -176,20 +176,30 @@ export default function Home() {
     // 2. 보유 중: 보유 목록 중 매수일이 오늘이 아닌 것
     holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
     
-    // 3. 매도 리스트 전체 통합
+    // 3. 매도 리스트 전체 통합 (익절 + 손절)
     const allClosed = [...result.profit_list, ...result.loss_list];
 
-    // 4. 당일 매도: 매도일(sell_date)이 오늘인 것
-    // (혹시 sell_date가 없을 경우를 대비해 trade_history의 마지막 날짜도 체크)
+    // 4. 당일 매도: 매도일(sell_date)이 오늘인 것만 필터링
     todaySells = allClosed.filter((item: any) => {
-      const sellDate = item.sell_date || (item.trade_history?.length > 0 ? item.trade_history[item.trade_history.length - 1].date : "");
-      return sellDate === todayStr;
+      // 우선순위 1: 명시적인 sell_date 확인
+      if (item.sell_date) return item.sell_date === todayStr;
+      
+      // 우선순위 2: 거래 내역의 마지막 날짜(매도일) 확인
+      if (item.trade_history && item.trade_history.length > 0) {
+        const lastDate = item.trade_history[item.trade_history.length - 1].date;
+        return lastDate === todayStr;
+      }
+      return false; // 날짜 정보 없으면 제외
     });
 
-    // 5. 지난 매매 내역: 오늘 판 게 아닌 것
+    // 5. 지난 매매 내역: 오늘 판 게 아닌 것들
     pastSells = allClosed.filter((item: any) => {
-      const sellDate = item.sell_date || (item.trade_history?.length > 0 ? item.trade_history[item.trade_history.length - 1].date : "");
-      return sellDate !== todayStr;
+      if (item.sell_date) return item.sell_date !== todayStr;
+      if (item.trade_history && item.trade_history.length > 0) {
+        const lastDate = item.trade_history[item.trade_history.length - 1].date;
+        return lastDate !== todayStr;
+      }
+      return true; // 날짜 정보 없으면 과거 내역으로 간주
     });
   }
 
@@ -312,7 +322,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* 4. 지난 매매 내역 (새로 추가됨) */}
+            {/* 4. 지난 매매 내역 */}
             {pastSells.length > 0 && (
               <section className="opacity-75 hover:opacity-100 transition-opacity">
                 <h2 className="text-lg md:text-xl font-bold text-gray-400 mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
