@@ -30,7 +30,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
 
     chartRef.current = chart;
 
-    // 👇 [수정] 종가만 가져오던 것을 OHLC 데이터로 매핑
     const candleData = data.map(d => ({ 
       time: d.date, 
       open: d.open, 
@@ -43,7 +42,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 보조지표 선 그리기 (볼린저 밴드, 이동평균선)
     const bbUpperSeries = chart.addLineSeries({ color: 'rgba(255, 82, 82, 0.9)', lineWidth: 2, lineStyle: LineStyle.Dashed });
     bbUpperSeries.setData(bbUpData);
     
@@ -53,26 +51,29 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const maSeries = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 2 });
     maSeries.setData(ma20Data);
 
-    // 👇 [수정] AreaSeries 대신 CandlestickSeries 사용 (한국식 색상 적용)
     const mainSeries = chart.addCandlestickSeries({
-      upColor: '#ef4444',       // 양봉 (빨간색)
-      downColor: '#3b82f6',     // 음봉 (파란색)
+      upColor: '#ef4444',       
+      downColor: '#3b82f6',     
       borderVisible: false,
-      wickUpColor: '#ef4444',   // 양봉 꼬리
-      wickDownColor: '#3b82f6', // 음봉 꼬리
+      wickUpColor: '#ef4444',   
+      wickDownColor: '#3b82f6', 
     });
     mainSeries.setData(candleData);
     
-    // 매매 마커(B/S) 표시 로직
+    // 👇 [수정] 매매 마커에 체결 가격 추가 표시
     if (tradeHistory && tradeHistory.length > 0) {
-      const markers = tradeHistory.map((t: any) => ({
-        time: t.date,
-        position: t.type.includes("매수") ? 'belowBar' : 'aboveBar',
-        color: t.type.includes("매수") ? '#ef4444' : '#3b82f6',
-        shape: t.type.includes("매수") ? 'arrowUp' : 'arrowDown',
-        text: t.type.includes("매수") ? 'B' : 'S',
-        size: 1,
-      }));
+      const markers = tradeHistory.map((t: any) => {
+        const isBuy = t.type.includes("매수");
+        const priceStr = parseInt(t.price).toLocaleString();
+        return {
+          time: t.date,
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          color: isBuy ? '#ef4444' : '#3b82f6',
+          shape: isBuy ? 'arrowUp' : 'arrowDown',
+          text: isBuy ? `B: ${priceStr}` : `S: ${priceStr}`, // 👈 B: 50,000 형태로 표시
+          size: 1,
+        };
+      });
       mainSeries.setMarkers(markers as any[]);
     }
 
@@ -85,9 +86,9 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     });
     resizeObserver.observe(chartContainerRef.current);
 
-    // 초기 화면은 최근 60일치 캔들을 보여줌
-    if(data.length > 60) {
-        try { chart.timeScale().setVisibleRange({ from: data[data.length - 60].date, to: data[data.length - 1].date }); } 
+    // 👇 [수정] 초기 화면 표시 범위를 최근 60일에서 30일(약 1달)로 축소
+    if(data.length > 30) {
+        try { chart.timeScale().setVisibleRange({ from: data[data.length - 30].date, to: data[data.length - 1].date }); } 
         catch(e) { chart.timeScale().fitContent(); }
     } else { chart.timeScale().fitContent(); }
 
@@ -103,8 +104,9 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     
     const targetIndex = data.findIndex(d => d.date === focusDate);
     if (targetIndex !== -1) {
-      const fromIndex = Math.max(0, targetIndex - 30);
-      const toIndex = Math.min(data.length - 1, targetIndex + 30);
+      // 👇 [수정] 클릭 시 이동하는 범위도 앞뒤 15일(총 30일)로 맞춰서 통일감을 줌
+      const fromIndex = Math.max(0, targetIndex - 15);
+      const toIndex = Math.min(data.length - 1, targetIndex + 15);
       
       try {
         chartRef.current.timeScale().setVisibleRange({
