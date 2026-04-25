@@ -211,15 +211,11 @@ def run_backtest_logic(args):
 
 @app.route('/api/analyze')
 def analyze():
-    # 👇 [수정] URL 파라미터 확인 (기본값 '1')
-    file_option = request.args.get('file', '1')
-    
-    # 👇 [수정] 파일명 결정 로직
-    target_filename = '대상티커2.xlsx' if file_option == '2' else '대상티커.xlsx'
+    # 파일 선택 로직 삭제 및 단일 파일로 고정
+    target_filename = '대상티커.xlsx'
 
     def generate():
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        # 👇 [수정] 결정된 파일명 사용
         file_path = os.path.join(base_dir, target_filename)
 
         if not os.path.exists(file_path):
@@ -277,8 +273,21 @@ def analyze():
         profit_list = [r for r in results if r['return_rate'] is not None and r['return_rate'] > 0 and not r['is_holding']]
         profit_list.sort(key=lambda x: x['return_rate'], reverse=True)
 
+        # 👇 [추가된 로직] 전체 누적 수익금 및 자산 계산
+        # 각 종목별 발생한 순수익(최종 자산 - 초기 자본)을 모두 더합니다.
+        total_net_profit = sum(r['final_asset'] - INITIAL_CASH for r in results if r['final_asset'] is not None)
+        total_seed = INITIAL_CASH + total_net_profit
+        total_return_rate = (total_net_profit / INITIAL_CASH) * 100
+
+        # 👇 [수정된 로직] 결과에 summary 객체 포함하여 반환
         yield json.dumps({
             "type": "result",
+            "summary": {
+                "initial_seed": INITIAL_CASH,
+                "total_net_profit": total_net_profit,
+                "total_seed": total_seed,
+                "total_return_rate": total_return_rate
+            },
             "holding_list": holding_list,
             "waiting_list": waiting_list,
             "loss_list": loss_list,

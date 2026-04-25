@@ -127,10 +127,10 @@ export default function Home() {
     } else { setChartData([]); }
   }, [selectedStock]);
 
-  const runAnalysis = async (fileNum: number) => {
+  const runAnalysis = async () => {
     setLoading(true); setResult(null); setLogs([]); setProgress({ current: 0, total: 0 });
     try {
-      const response = await fetch(`/api/analyze?file=${fileNum}`);
+      const response = await fetch(`/api/analyze`); // 파라미터 제거
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) return;
@@ -211,13 +211,15 @@ export default function Home() {
         </h1>
         <div>
           <div className="flex flex-col md:flex-row gap-2">
-            <button onClick={() => runAnalysis(1)} disabled={loading} className={`flex-1 px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-500 text-white active:scale-95"}`}>
-              {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 (기본)"}
-            </button>
-            <button onClick={() => runAnalysis(2)} disabled={loading} className={`flex-1 px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500 text-white active:scale-95"}`}>
-              {loading ? "대기 중..." : "🧪 분석 (파일 2)"}
+            <button 
+              onClick={() => runAnalysis()} 
+              disabled={loading} 
+              className={`w-full px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-500 text-white active:scale-95"}`}
+            >
+              {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 시작"}
             </button>
           </div>
+          {/* 프로그레스 바 로직은 그대로 유지 */}
           {loading && progress.total > 0 && (
             <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
               <div className="bg-green-500 h-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
@@ -225,10 +227,38 @@ export default function Home() {
           )}
         </div>
       </div>
-
+      
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
+            {/* 👇 [추가된 UI] 내 계좌 요약 대시보드 */}
+            {result.summary && (
+              <section className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row justify-between items-center gap-6">
+                <div>
+                  <h2 className="text-gray-400 text-sm font-bold mb-1 flex items-center gap-2">
+                    <span>💰</span> 내 계좌 요약 <span className="text-xs font-normal">(초기 시드: 1,000만원)</span>
+                  </h2>
+                  <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
+                    {parseInt(result.summary.total_seed).toLocaleString()} <span className="text-lg text-gray-400 font-normal">원</span>
+                  </div>
+                </div>
+                <div className="flex gap-6 text-right bg-gray-900/50 p-4 rounded-xl border border-gray-800 w-full md:w-auto justify-end">
+                  <div>
+                    <div className="text-gray-500 text-xs mb-1">누적 수익금</div>
+                    <div className={`text-xl font-bold ${result.summary.total_net_profit >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                      {result.summary.total_net_profit >= 0 ? '+' : ''}{parseInt(result.summary.total_net_profit).toLocaleString()}원
+                    </div>
+                  </div>
+                  <div className="w-px bg-gray-700 mx-2"></div>
+                  <div>
+                    <div className="text-gray-500 text-xs mb-1">총 누적 수익률</div>
+                    <div className={`text-xl font-bold ${result.summary.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                      {result.summary.total_return_rate >= 0 ? '+' : ''}{result.summary.total_return_rate.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
             {/* 1. 당일 매수 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
