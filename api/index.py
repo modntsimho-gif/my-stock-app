@@ -44,7 +44,6 @@ def run_backtest_logic(args):
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
 
-
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
@@ -93,6 +92,9 @@ def run_backtest_logic(args):
                 revenue = holdings * sell_price
                 profit_rate = (sell_price - avg_price) / avg_price * 100
                 
+                # 👇 [추가] 이번 단건 매매의 실현 수익금 계산
+                realized_profit = revenue - (holdings * avg_price)
+                
                 trade_history.append({
                     "date": date_str,
                     "type": "매도",
@@ -100,6 +102,7 @@ def run_backtest_logic(args):
                     "price": clean_nan(sell_price),
                     "qty": holdings,
                     "profit_rate": clean_nan(profit_rate),
+                    "realized_profit": clean_nan(realized_profit), # 👈 기록에 추가됨
                     "balance": clean_nan(cash + revenue)
                 })
 
@@ -192,6 +195,9 @@ def run_backtest_logic(args):
     elif last_close > 0:
         current_upside = ((last_target_mid - last_close) / last_close) * 100
 
+    if is_waiting and current_upside < 4.0:
+        is_waiting = False
+
     return {
         'ticker': ticker,
         'stock_name': stock_name,
@@ -211,7 +217,6 @@ def run_backtest_logic(args):
 
 @app.route('/api/analyze')
 def analyze():
-    # 파일 선택 로직 삭제 및 단일 파일로 고정
     target_filename = '대상티커.xlsx'
 
     def generate():
@@ -273,13 +278,10 @@ def analyze():
         profit_list = [r for r in results if r['return_rate'] is not None and r['return_rate'] > 0 and not r['is_holding']]
         profit_list.sort(key=lambda x: x['return_rate'], reverse=True)
 
-        # 👇 [추가된 로직] 전체 누적 수익금 및 자산 계산
-        # 각 종목별 발생한 순수익(최종 자산 - 초기 자본)을 모두 더합니다.
         total_net_profit = sum(r['final_asset'] - INITIAL_CASH for r in results if r['final_asset'] is not None)
         total_seed = INITIAL_CASH + total_net_profit
         total_return_rate = (total_net_profit / INITIAL_CASH) * 100
 
-        # 👇 [수정된 로직] 결과에 summary 객체 포함하여 반환
         yield json.dumps({
             "type": "result",
             "summary": {
