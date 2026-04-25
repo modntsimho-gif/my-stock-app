@@ -9,16 +9,21 @@ export default function Home() {
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  
+  // 👇 [추가] 현실적인 계좌 시뮬레이션 결과를 담을 상태
+  const [accountSimResult, setAccountSimResult] = useState<any>(null);
 
-  // 💡 [추가] 컴포넌트 마운트 시 세션 스토리지에 저장된 결과가 있으면 불러오기 (뒤로가기 대비)
   useEffect(() => {
     const savedResult = sessionStorage.getItem('backtestResult');
     if (savedResult) {
       setResult(JSON.parse(savedResult));
     }
+    const savedSim = sessionStorage.getItem('accountSimResult');
+    if (savedSim) {
+      setAccountSimResult(JSON.parse(savedSim));
+    }
   }, []);
 
-  // 오늘 날짜 구하기 (YYYY-MM-DD) - 한국 시간 기준
   const getTodayString = () => {
     const now = new Date();
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -29,22 +34,17 @@ export default function Home() {
 
   const todayStr = getTodayString();
 
-  // 💡 [추가] 상세 페이지 이동 핸들러
   const goToDetail = (item: any) => {
-    // 1. 선택한 종목 데이터를 세션 스토리지에 저장
     sessionStorage.setItem('currentStockDetail', JSON.stringify(item));
-    // 2. 전체 백테스트 결과도 저장 (뒤로가기 했을 때 데이터 유지용)
-    if (result) {
-      sessionStorage.setItem('backtestResult', JSON.stringify(result));
-    }
-    // 3. 상세 페이지로 이동
+    if (result) sessionStorage.setItem('backtestResult', JSON.stringify(result));
+    if (accountSimResult) sessionStorage.setItem('accountSimResult', JSON.stringify(accountSimResult));
     router.push(`/stock/${item.ticker}`);
   };
 
   const runAnalysis = async () => {
-    setLoading(true); setResult(null); setLogs([]); setProgress({ current: 0, total: 0 });
-    // 새로운 분석을 시작할 때 기존 세션 스토리지 초기화
+    setLoading(true); setResult(null); setAccountSimResult(null); setLogs([]); setProgress({ current: 0, total: 0 });
     sessionStorage.removeItem('backtestResult');
+    sessionStorage.removeItem('accountSimResult');
     sessionStorage.removeItem('currentStockDetail');
 
     try {
@@ -72,7 +72,6 @@ export default function Home() {
             } else if (data.type === "result") {
               setResult(data);
               setLogs((prev) => [...prev, "🏁 분석 완료!"]);
-              // 분석 완료 즉시 세션 스토리지에 결과 저장
               sessionStorage.setItem('backtestResult', JSON.stringify(data));
             } else if (data.type === "error") {
               setLogs((prev) => [...prev, `❌ 에러: ${data.message}`]);
@@ -83,7 +82,93 @@ export default function Home() {
     } catch (err) { alert("통신 중 에러 발생"); console.error(err); } finally { setLoading(false); }
   };
 
-  // 데이터 분류 로직
+  // 👇 [추가] 천재적인 아이디어: 프론트엔드에서 시그널을 모아 시간순으로 1,000만원 시뮬레이션
+  const calculateAccountReturn = () => {
+    if (!result) return;
+
+    let cash = 10000000; // 초기 시드 1천만원
+    let portfolio: Record<string, any> = {};
+    let allEvents: any[] = [];
+
+    // 1. 모든 종목의 매매 시그널을 하나의 배열로 수집
+    const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
+    const uniqueStocks = new Map();
+    
+    allStocks.forEach(stock => {
+      if (!uniqueStocks.has(stock.ticker)) {
+        uniqueStocks.set(stock.ticker, stock);
+        if (stock.trade_history && Array.isArray(stock.trade_history)) {
+          stock.trade_history.forEach((trade: any) => {
+            allEvents.push({ ...trade, ticker: stock.ticker, current_price: stock.current_price });
+          });
+        }
+      }
+    });
+
+    // 2. 날짜 순으로 정렬 (과거 -> 현재)
+    allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // 3. 1천만원의 공통 지갑(cash)을 사용하여 시간순 시뮬레이션 진행
+    allEvents.forEach(event => {
+      const { type, price, ticker } = event;
+      const numPrice = parseInt(price);
+
+      if (type.includes("매수 (진입)")) {
+        if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
+          const investMoney = cash * 0.1; // 현재 남은 현금의 10% 진입
+          const qty = Math.floor(investMoney / numPrice);
+          if (qty > 0 && cash >= qty * numPrice) { // 현금이 있어야만 매수 가능!
+            cash -= qty * numPrice;
+            portfolio[ticker] = { holdings: qty, avg_price: numPrice, entry_amount: qty * numPrice };
+          }
+        }
+      } else if (type.includes("매수 (물타기)")) {
+        if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
+          const investMoney = portfolio[ticker].entry_amount; // 첫 진입 금액만큼 물타기
+          const qty = Math.floor(investMoney / numPrice);
+          if (qty > 0 && cash >= qty * numPrice) { // 현금이 있어야만 물타기 가능!
+            const cost = qty * numPrice;
+            cash -= cost;
+            const totalQty = portfolio[ticker].holdings + qty;
+            const totalCost = (portfolio[ticker].holdings * portfolio[ticker].avg_price) + cost;
+            portfolio[ticker].holdings = totalQty;
+            portfolio[ticker].avg_price = totalCost / totalQty;
+          }
+        }
+      } else if (type.includes("매도")) {
+        if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
+          const revenue = portfolio[ticker].holdings * numPrice;
+          cash += revenue; // 익절/손절 후 현금 회수
+          portfolio[ticker].holdings = 0;
+        }
+      }
+    });
+
+    // 4. 최종 자산 계산 (남은 현금 + 현재 보유 중인 주식들의 가치)
+    let stockValue = 0;
+    Object.keys(portfolio).forEach(ticker => {
+      if (portfolio[ticker].holdings > 0) {
+        const stockInfo = uniqueStocks.get(ticker);
+        stockValue += portfolio[ticker].holdings * stockInfo.current_price;
+      }
+    });
+
+    const finalAsset = cash + stockValue;
+    const totalReturnRate = ((finalAsset - 10000000) / 10000000) * 100;
+
+    const simData = {
+      initial_seed: 10000000,
+      final_asset: finalAsset,
+      total_net_profit: finalAsset - 10000000,
+      total_return_rate: totalReturnRate,
+      cash: cash,
+      stock_value: stockValue
+    };
+
+    setAccountSimResult(simData);
+    sessionStorage.setItem('accountSimResult', JSON.stringify(simData));
+  };
+
   let todayBuys: any[] = [];
   let holdings: any[] = [];
   let todaySells: any[] = [];
@@ -92,14 +177,12 @@ export default function Home() {
   if (result) {
     todayBuys = result.holding_list.filter((item: any) => item.first_buy_date === todayStr);
     holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
-    
     const allClosed = [...result.profit_list, ...result.loss_list];
 
     todaySells = allClosed.filter((item: any) => {
       if (item.sell_date) return item.sell_date === todayStr;
       if (item.trade_history && item.trade_history.length > 0) {
-        const lastDate = item.trade_history[item.trade_history.length - 1].date;
-        return lastDate === todayStr;
+        return item.trade_history[item.trade_history.length - 1].date === todayStr;
       }
       return false;
     });
@@ -107,8 +190,7 @@ export default function Home() {
     pastSells = allClosed.filter((item: any) => {
       if (item.sell_date) return item.sell_date !== todayStr;
       if (item.trade_history && item.trade_history.length > 0) {
-        const lastDate = item.trade_history[item.trade_history.length - 1].date;
-        return lastDate !== todayStr;
+        return item.trade_history[item.trade_history.length - 1].date !== todayStr;
       }
       return true;
     });
@@ -125,10 +207,20 @@ export default function Home() {
             <button 
               onClick={() => runAnalysis()} 
               disabled={loading} 
-              className={`w-full px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-500 text-white active:scale-95"}`}
+              className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-500 text-white active:scale-95"}`}
             >
               {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 시작"}
             </button>
+            
+            {/* 👇 [추가] 계좌 수익률 계산 버튼 */}
+            {result && (
+              <button 
+                onClick={calculateAccountReturn}
+                className="w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md bg-blue-600 hover:bg-blue-500 text-white active:scale-95 flex items-center justify-center gap-2"
+              >
+                <span>📊</span> 계좌 수익률계산
+              </button>
+            )}
           </div>
           {loading && progress.total > 0 && (
             <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
@@ -141,32 +233,41 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
-            {/* 내 계좌 요약 대시보드 */}
-            {result.summary && (
+            {/* 👇 [수정] 버튼 클릭 시 나타나는 리얼 계좌 요약 대시보드 */}
+            {accountSimResult ? (
               <section className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row justify-between items-center gap-6">
                 <div>
                   <h2 className="text-gray-400 text-sm font-bold mb-1 flex items-center gap-2">
-                    <span>💰</span> 내 계좌 요약 <span className="text-xs font-normal">(초기 시드: 1,000만원)</span>
+                    <span>💰</span> 리얼 계좌 시뮬레이션 <span className="text-xs font-normal">(초기 시드: 1,000만원 공유)</span>
                   </h2>
-                  <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-                    {parseInt(result.summary.total_seed).toLocaleString()} <span className="text-lg text-gray-400 font-normal">원</span>
+                  <div className="text-3xl md:text-4xl font-bold text-white tracking-tight mb-2">
+                    {parseInt(accountSimResult.final_asset).toLocaleString()} <span className="text-lg text-gray-400 font-normal">원</span>
+                  </div>
+                  <div className="text-xs text-gray-400 bg-gray-900/50 inline-block px-3 py-1.5 rounded-lg border border-gray-700">
+                    💵 남은 현금: <span className="text-white font-bold">{parseInt(accountSimResult.cash).toLocaleString()}원</span> &nbsp;|&nbsp; 
+                    📈 주식 가치: <span className="text-white font-bold">{parseInt(accountSimResult.stock_value).toLocaleString()}원</span>
                   </div>
                 </div>
                 <div className="flex gap-6 text-right bg-gray-900/50 p-4 rounded-xl border border-gray-800 w-full md:w-auto justify-end">
                   <div>
                     <div className="text-gray-500 text-xs mb-1">누적 수익금</div>
-                    <div className={`text-xl font-bold ${result.summary.total_net_profit >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                      {result.summary.total_net_profit >= 0 ? '+' : ''}{parseInt(result.summary.total_net_profit).toLocaleString()}원
+                    <div className={`text-xl font-bold ${accountSimResult.total_net_profit >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                      {accountSimResult.total_net_profit >= 0 ? '+' : ''}{parseInt(accountSimResult.total_net_profit).toLocaleString()}원
                     </div>
                   </div>
                   <div className="w-px bg-gray-700 mx-2"></div>
                   <div>
                     <div className="text-gray-500 text-xs mb-1">총 누적 수익률</div>
-                    <div className={`text-xl font-bold ${result.summary.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                      {result.summary.total_return_rate >= 0 ? '+' : ''}{result.summary.total_return_rate.toFixed(2)}%
+                    <div className={`text-xl font-bold ${accountSimResult.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                      {accountSimResult.total_return_rate >= 0 ? '+' : ''}{accountSimResult.total_return_rate.toFixed(2)}%
                     </div>
                   </div>
                 </div>
+              </section>
+            ) : (
+              <section className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 border-dashed text-center">
+                <div className="text-gray-400 mb-2">각 종목의 병렬 분석이 완료되었습니다.</div>
+                <div className="text-sm text-gray-500">상단의 <strong className="text-blue-400">[📊 계좌 수익률계산]</strong> 버튼을 눌러 1,000만원 시드 기반의 현실적인 계좌 흐름을 확인하세요.</div>
               </section>
             )}
 
