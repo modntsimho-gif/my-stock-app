@@ -89,9 +89,7 @@ export default function Home() {
     let allEvents: any[] = [];
     let executedTrades: any[] = []; 
 
-    const fixedInvestAmount = initialSeed * (investRatio / 100);
-
-    // 👇 [추가] 그래프를 그리기 위한 실현 자산 추적 변수
+    // 👇 [수정] 복리 계산을 위해 '현재 총 실현 자산(현금 + 투자원금)'을 추적하는 변수
     let currentRealizedAsset = initialSeed;
     const dailyAssetMap = new Map();
 
@@ -117,24 +115,37 @@ export default function Home() {
 
       if (type.includes("매수 (진입)")) {
         if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-          const qty = Math.floor(fixedInvestAmount / numPrice);
+          // 👇 [핵심 로직] 진입 시점의 '전체 계좌 실현 자산'을 기준으로 매수 금액 계산 (복리 적용)
+          const dynamicInvestAmount = currentRealizedAsset * (investRatio / 100);
+          const qty = Math.floor(dynamicInvestAmount / numPrice);
+          
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
             cash -= cost;
-            portfolio[ticker] = { holdings: qty, avg_price: numPrice, entry_amount: cost };
+            portfolio[ticker] = { 
+              holdings: qty, 
+              avg_price: numPrice, 
+              entry_amount: cost,
+              base_invest_amount: dynamicInvestAmount // 👈 물타기 때 쓰기 위해 첫 진입 금액을 기억해둠
+            };
             executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail });
           }
         }
       } else if (type.includes("매수 (물타기)")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          const qty = Math.floor(fixedInvestAmount / numPrice);
+          // 👇 [핵심 로직] 물타기는 '첫 진입 시점에 계산해둔 금액'을 동일하게 사용 (정액 분할 매수 유지)
+          const qty = Math.floor(portfolio[ticker].base_invest_amount / numPrice);
+          
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
             cash -= cost;
             const totalQty = portfolio[ticker].holdings + qty;
             const totalCost = (portfolio[ticker].holdings * portfolio[ticker].avg_price) + cost;
+            
             portfolio[ticker].holdings = totalQty;
             portfolio[ticker].avg_price = totalCost / totalQty;
+            portfolio[ticker].entry_amount += cost;
+            
             executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail });
           }
         }
@@ -149,18 +160,17 @@ export default function Home() {
           
           cash += revenue; 
           portfolio[ticker].holdings = 0;
+          portfolio[ticker].entry_amount = 0;
           executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail, realizedProfit, profitRate });
           
-          // 👇 [추가] 매도 시 실현 자산 업데이트
+          // 👇 [핵심 로직] 익절/손절 시 실현 자산 업데이트 (다음 종목 진입 시 이 금액을 기준으로 비중이 계산됨)
           currentRealizedAsset += realizedProfit;
         }
       }
       
-      // 👇 [추가] 해당 날짜의 최종 실현 자산을 기록 (그래프용)
       dailyAssetMap.set(date, currentRealizedAsset);
     });
 
-    // 👇 [추가] 맵 데이터를 배열로 변환하여 차트 데이터 규격에 맞춤
     const equityCurve = Array.from(dailyAssetMap.entries())
       .map(([date, val]) => ({ time: date, value: val }))
       .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
@@ -185,7 +195,7 @@ export default function Home() {
       cash: cash,
       stock_value: stockValue,
       executed_trades: executedTrades,
-      equity_curve: equityCurve // 차트 데이터 추가
+      equity_curve: equityCurve
     };
 
     setAccountSimResult(simData);
@@ -311,7 +321,6 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  {/* 👇 [수정] 모달 대신 새로운 페이지(/timeline)로 이동하도록 변경 */}
                   <button 
                     onClick={() => router.push('/timeline')}
                     className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold py-2.5 px-5 rounded-lg transition-colors border border-blue-500 shadow-md flex items-center gap-2"
@@ -327,7 +336,6 @@ export default function Home() {
               </section>
             )}
 
-            {/* 당일 매수, 매도, 보유중 등 기존 섹션 렌더링 (생략 없이 그대로 유지) */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-red-500">🚀 당일 매수 체결</span>
