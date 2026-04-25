@@ -40,7 +40,6 @@ export default function TimelinePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // 👇 [추가] 종목 상세 페이지로 이동하는 함수 (보내주신 상세 화면과 연동)
   const goToDetail = (ticker: string) => {
     const savedResult = sessionStorage.getItem('backtestResult');
     if (savedResult) {
@@ -105,6 +104,28 @@ export default function TimelinePage() {
       return t;
     });
   }, [simData]);
+
+  // 👇 [추가] 최대 동시 투자금(필요 시드) 계산 로직
+  const maxRequiredSeed = useMemo(() => {
+    if (!enrichedTrades || enrichedTrades.length === 0) return 0;
+    
+    let currentInvested = 0;
+    let maxInvested = 0;
+    
+    // 시간순으로 정렬된 상태에서 매수/매도에 따른 누적 투자원금을 추적합니다.
+    enrichedTrades.forEach((t: any) => {
+      if (t.type.includes("매수")) {
+        currentInvested += t.tradeAmount; // 매수 시 투자금 증가
+      } else {
+        currentInvested -= t.totalInvested; // 매도 시 해당 종목에 들어갔던 원금 회수
+      }
+      if (currentInvested > maxInvested) {
+        maxInvested = currentInvested;
+      }
+    });
+    
+    return maxInvested;
+  }, [enrichedTrades]);
 
   const filteredTrades = useMemo(() => {
     let result = enrichedTrades;
@@ -267,9 +288,16 @@ export default function TimelinePage() {
               </div>
             </div>
             {selectedYear === "전체" && (
-              <div className="text-right">
-                <div className="text-xs text-gray-500">최종 자산</div>
-                <div className="text-2xl font-bold text-emerald-400">{parseInt(simData.final_asset).toLocaleString()}원</div>
+              <div className="flex gap-6 text-right">
+                {/* 👇 [추가] 최대 필요 시드 표시 영역 */}
+                <div className="bg-gray-900/50 px-4 py-2 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-400 mb-1">최대 필요 시드 (Peak)</div>
+                  <div className="text-xl font-bold text-blue-400">{parseInt(maxRequiredSeed.toString()).toLocaleString()}원</div>
+                </div>
+                <div className="bg-gray-900/50 px-4 py-2 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-400 mb-1">최종 자산</div>
+                  <div className="text-xl font-bold text-emerald-400">{parseInt(simData.final_asset).toLocaleString()}원</div>
+                </div>
               </div>
             )}
           </div>
@@ -338,7 +366,6 @@ export default function TimelinePage() {
                               {trade.stockName} <span className="text-sm font-normal text-gray-500">{trade.ticker}</span>
                             </div>
                             
-                            {/* 👇 [추가] 상세 차트 보기 버튼 */}
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
