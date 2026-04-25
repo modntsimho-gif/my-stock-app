@@ -79,20 +79,23 @@ def run_backtest_logic(args):
             sell_price = 0
             sell_type = ""
             
-            if row['High'] >= target_tp:
-                sell_signal = True
-                sell_price = row['Open'] if row['Open'] > target_tp else target_tp
-                sell_type = "목표가 달성 (3%)"
-            elif row['High'] >= target_mid:
+            # 👇 1순위: BB 중간값 도달 (우선 체결)
+            if row['High'] >= target_mid:
                 sell_signal = True
                 sell_price = row['Open'] if row['Open'] > target_mid else target_mid
                 sell_type = "BB 중간값 도달"
+                
+            # 👇 2순위: 3% 고정 익절 (1순위 조건에 도달하지 못했을 때만 발동)
+            elif row['High'] >= target_tp:
+                sell_signal = True
+                sell_price = row['Open'] if row['Open'] > target_tp else target_tp
+                sell_type = "목표가 달성 (3%)"
 
             if sell_signal:
                 revenue = holdings * sell_price
                 profit_rate = (sell_price - avg_price) / avg_price * 100
                 
-                # 👇 [추가] 이번 단건 매매의 실현 수익금 계산
+                # 이번 단건 매매의 실현 수익금 계산
                 realized_profit = revenue - (holdings * avg_price)
                 
                 trade_history.append({
@@ -102,7 +105,7 @@ def run_backtest_logic(args):
                     "price": clean_nan(sell_price),
                     "qty": holdings,
                     "profit_rate": clean_nan(profit_rate),
-                    "realized_profit": clean_nan(realized_profit), # 👈 기록에 추가됨
+                    "realized_profit": clean_nan(realized_profit),
                     "balance": clean_nan(cash + revenue)
                 })
 
@@ -334,15 +337,21 @@ def get_chart_data():
 
         chart_data = []
         for date, row in df.iterrows():
-            chart_data.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "close": int(row['Close']),
-                "ma20": int(row['MA20']) if not math.isnan(row['MA20']) else None,
-                "bb_upper": int(row['BB_Upper']) if not math.isnan(row['BB_Upper']) else None,
-                "bb_lower": int(row['BB_Lower']) if not math.isnan(row['BB_Lower']) else None,
-            })
+            chart_data = []
+            for date, row in df.iterrows():
+                chart_data.append({
+                    "date": date.strftime("%Y-%m-%d"),
+                    # 👇 [추가] 시가, 고가, 저가 데이터 추가
+                    "open": int(row['Open']),
+                    "high": int(row['High']),
+                    "low": int(row['Low']),
+                    "close": int(row['Close']),
+                    "ma20": int(row['MA20']) if not math.isnan(row['MA20']) else None,
+                    "bb_upper": int(row['BB_Upper']) if not math.isnan(row['BB_Upper']) else None,
+                    "bb_lower": int(row['BB_Lower']) if not math.isnan(row['BB_Lower']) else None,
+                })
 
-        return jsonify(chart_data)
+            return jsonify(chart_data)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

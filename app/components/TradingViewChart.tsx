@@ -2,7 +2,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
-// 👇 [수정] focusDate 프롭스 추가
 export default function TradingViewChart({ data, tradeHistory, focusDate }: { data: any[], tradeHistory: any[], focusDate?: string | null }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
@@ -10,7 +9,7 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
 
   useEffect(() => { setIsMounted(true); }, []);
 
-  // 차트 초기화 및 데이터 세팅 (기존과 동일)
+  // 차트 초기화 및 데이터 세팅
   useEffect(() => {
     if (!isMounted || !chartContainerRef.current || data.length === 0) return;
 
@@ -31,11 +30,20 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
 
     chartRef.current = chart;
 
-    const lineData = data.map(d => ({ time: d.date, value: d.close }));
+    // 👇 [수정] 종가만 가져오던 것을 OHLC 데이터로 매핑
+    const candleData = data.map(d => ({ 
+      time: d.date, 
+      open: d.open, 
+      high: d.high, 
+      low: d.low, 
+      close: d.close 
+    }));
+    
     const ma20Data = data.map(d => ({ time: d.date, value: d.ma20 })).filter(d => d.value);
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
+    // 보조지표 선 그리기 (볼린저 밴드, 이동평균선)
     const bbUpperSeries = chart.addLineSeries({ color: 'rgba(255, 82, 82, 0.9)', lineWidth: 2, lineStyle: LineStyle.Dashed });
     bbUpperSeries.setData(bbUpData);
     
@@ -45,11 +53,17 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const maSeries = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 2 });
     maSeries.setData(ma20Data);
 
-    const mainSeries = chart.addAreaSeries({
-      topColor: 'rgba(34, 197, 94, 0.56)', bottomColor: 'rgba(34, 197, 94, 0.04)', lineColor: '#4ade80', lineWidth: 2,
+    // 👇 [수정] AreaSeries 대신 CandlestickSeries 사용 (한국식 색상 적용)
+    const mainSeries = chart.addCandlestickSeries({
+      upColor: '#ef4444',       // 양봉 (빨간색)
+      downColor: '#3b82f6',     // 음봉 (파란색)
+      borderVisible: false,
+      wickUpColor: '#ef4444',   // 양봉 꼬리
+      wickDownColor: '#3b82f6', // 음봉 꼬리
     });
-    mainSeries.setData(lineData);
+    mainSeries.setData(candleData);
     
+    // 매매 마커(B/S) 표시 로직
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => ({
         time: t.date,
@@ -83,13 +97,12 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     };
   }, [data, tradeHistory, isMounted]);
 
-  // 👇 [추가] focusDate가 변경될 때 해당 날짜로 차트 이동 및 확대
+  // focusDate가 변경될 때 해당 날짜로 차트 이동 및 확대
   useEffect(() => {
     if (!chartRef.current || !focusDate || data.length === 0) return;
     
     const targetIndex = data.findIndex(d => d.date === focusDate);
     if (targetIndex !== -1) {
-      // 클릭한 날짜를 기준으로 앞뒤 30일(총 60일) 정도가 보이도록 줌인
       const fromIndex = Math.max(0, targetIndex - 30);
       const toIndex = Math.min(data.length - 1, targetIndex + 30);
       
