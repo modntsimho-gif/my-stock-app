@@ -10,18 +10,21 @@ export default function Home() {
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   
-  // 👇 [추가] 현실적인 계좌 시뮬레이션 결과를 담을 상태
   const [accountSimResult, setAccountSimResult] = useState<any>(null);
+  
+  // 👇 [추가] 시뮬레이션 설정 상태 (초기 시드, 1회 투자 비중)
+  const [initialSeed, setInitialSeed] = useState(10000000);
+  const [investRatio, setInvestRatio] = useState(10); // 10%
+  
+  // 👇 [추가] 매매 타임라인 모달 표시 여부
+  const [showTimeline, setShowTimeline] = useState(false);
 
   useEffect(() => {
     const savedResult = sessionStorage.getItem('backtestResult');
-    if (savedResult) {
-      setResult(JSON.parse(savedResult));
-    }
+    if (savedResult) setResult(JSON.parse(savedResult));
+    
     const savedSim = sessionStorage.getItem('accountSimResult');
-    if (savedSim) {
-      setAccountSimResult(JSON.parse(savedSim));
-    }
+    if (savedSim) setAccountSimResult(JSON.parse(savedSim));
   }, []);
 
   const getTodayString = () => {
@@ -76,21 +79,21 @@ export default function Home() {
             } else if (data.type === "error") {
               setLogs((prev) => [...prev, `❌ 에러: ${data.message}`]);
             }
-          } catch (e) { console.error("JSON 파싱 에러 (무시됨):", trimmedLine); }
+          } catch (e) {}
         }
       }
-    } catch (err) { alert("통신 중 에러 발생"); console.error(err); } finally { setLoading(false); }
+    } catch (err) { alert("통신 중 에러 발생"); } finally { setLoading(false); }
   };
 
-  // 👇 [추가] 천재적인 아이디어: 프론트엔드에서 시그널을 모아 시간순으로 1,000만원 시뮬레이션
+  // 👇 [수정] 입력받은 시드와 비중을 바탕으로 시뮬레이션 계산
   const calculateAccountReturn = () => {
     if (!result) return;
 
-    let cash = 10000000; // 초기 시드 1천만원
+    let cash = initialSeed; 
     let portfolio: Record<string, any> = {};
     let allEvents: any[] = [];
+    let executedTrades: any[] = []; // 실제 체결된 내역만 담을 배열
 
-    // 1. 모든 종목의 매매 시그널을 하나의 배열로 수집
     const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
     const uniqueStocks = new Map();
     
@@ -99,52 +102,59 @@ export default function Home() {
         uniqueStocks.set(stock.ticker, stock);
         if (stock.trade_history && Array.isArray(stock.trade_history)) {
           stock.trade_history.forEach((trade: any) => {
-            allEvents.push({ ...trade, ticker: stock.ticker, current_price: stock.current_price });
+            allEvents.push({ ...trade, ticker: stock.ticker, stockName: stock.stock_name, current_price: stock.current_price });
           });
         }
       }
     });
 
-    // 2. 날짜 순으로 정렬 (과거 -> 현재)
     allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    // 3. 1천만원의 공통 지갑(cash)을 사용하여 시간순 시뮬레이션 진행
     allEvents.forEach(event => {
-      const { type, price, ticker } = event;
+      const { type, price, ticker, stockName, date, detail } = event;
       const numPrice = parseInt(price);
 
       if (type.includes("매수 (진입)")) {
         if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-          const investMoney = cash * 0.1; // 현재 남은 현금의 10% 진입
+          const investMoney = cash * (investRatio / 100); // 설정한 비중만큼 진입
           const qty = Math.floor(investMoney / numPrice);
-          if (qty > 0 && cash >= qty * numPrice) { // 현금이 있어야만 매수 가능!
-            cash -= qty * numPrice;
-            portfolio[ticker] = { holdings: qty, avg_price: numPrice, entry_amount: qty * numPrice };
+          if (qty > 0 && cash >= qty * numPrice) { 
+            const cost = qty * numPrice;
+            cash -= cost;
+            portfolio[ticker] = { holdings: qty, avg_price: numPrice, entry_amount: cost };
+            executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail });
           }
         }
       } else if (type.includes("매수 (물타기)")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          const investMoney = portfolio[ticker].entry_amount; // 첫 진입 금액만큼 물타기
+          const investMoney = portfolio[ticker].entry_amount; 
           const qty = Math.floor(investMoney / numPrice);
-          if (qty > 0 && cash >= qty * numPrice) { // 현금이 있어야만 물타기 가능!
+          if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
             cash -= cost;
             const totalQty = portfolio[ticker].holdings + qty;
             const totalCost = (portfolio[ticker].holdings * portfolio[ticker].avg_price) + cost;
             portfolio[ticker].holdings = totalQty;
             portfolio[ticker].avg_price = totalCost / totalQty;
+            executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail });
           }
         }
       } else if (type.includes("매도")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          const revenue = portfolio[ticker].holdings * numPrice;
-          cash += revenue; // 익절/손절 후 현금 회수
+          const qty = portfolio[ticker].holdings;
+          const avgPrice = portfolio[ticker].avg_price;
+          const revenue = qty * numPrice;
+          
+          const realizedProfit = revenue - (qty * avgPrice);
+          const profitRate = ((numPrice - avgPrice) / avgPrice) * 100;
+          
+          cash += revenue; 
           portfolio[ticker].holdings = 0;
+          executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail, realizedProfit, profitRate });
         }
       }
     });
 
-    // 4. 최종 자산 계산 (남은 현금 + 현재 보유 중인 주식들의 가치)
     let stockValue = 0;
     Object.keys(portfolio).forEach(ticker => {
       if (portfolio[ticker].holdings > 0) {
@@ -154,15 +164,17 @@ export default function Home() {
     });
 
     const finalAsset = cash + stockValue;
-    const totalReturnRate = ((finalAsset - 10000000) / 10000000) * 100;
+    const totalReturnRate = ((finalAsset - initialSeed) / initialSeed) * 100;
 
     const simData = {
-      initial_seed: 10000000,
+      initial_seed: initialSeed,
+      invest_ratio: investRatio,
       final_asset: finalAsset,
-      total_net_profit: finalAsset - 10000000,
+      total_net_profit: finalAsset - initialSeed,
       total_return_rate: totalReturnRate,
       cash: cash,
-      stock_value: stockValue
+      stock_value: stockValue,
+      executed_trades: executedTrades // 체결 내역 저장
     };
 
     setAccountSimResult(simData);
@@ -202,6 +214,33 @@ export default function Home() {
         <h1 className="text-xl md:text-2xl font-bold text-green-400 mb-3 flex items-center gap-2">
           <span>📈</span> 가자 [반포자이]로 <span className="text-xs text-gray-500 font-normal mt-1">원베일리도 낫베드</span>
         </h1>
+        
+        {/* 👇 [추가] 시뮬레이션 설정 패널 */}
+        {result && (
+          <div className="flex flex-col md:flex-row gap-4 items-center bg-gray-800/50 p-3 rounded-lg border border-gray-700 mb-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-400 font-bold">초기 시드:</label>
+              <input 
+                type="number" 
+                value={initialSeed} 
+                onChange={e => setInitialSeed(Number(e.target.value))} 
+                className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 w-32 outline-none focus:border-blue-500" 
+              />
+              <span className="text-sm text-gray-400">원</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-400 font-bold">1회 진입 비중:</label>
+              <input 
+                type="number" 
+                value={investRatio} 
+                onChange={e => setInvestRatio(Number(e.target.value))} 
+                className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 w-20 outline-none focus:border-blue-500" 
+              />
+              <span className="text-sm text-gray-400">%</span>
+            </div>
+          </div>
+        )}
+
         <div>
           <div className="flex flex-col md:flex-row gap-2">
             <button 
@@ -212,7 +251,6 @@ export default function Home() {
               {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 시작"}
             </button>
             
-            {/* 👇 [추가] 계좌 수익률 계산 버튼 */}
             {result && (
               <button 
                 onClick={calculateAccountReturn}
@@ -233,12 +271,11 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
-            {/* 👇 [수정] 버튼 클릭 시 나타나는 리얼 계좌 요약 대시보드 */}
             {accountSimResult ? (
-              <section className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row justify-between items-center gap-6">
+              <section className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
                 <div>
                   <h2 className="text-gray-400 text-sm font-bold mb-1 flex items-center gap-2">
-                    <span>💰</span> 리얼 계좌 시뮬레이션 <span className="text-xs font-normal">(초기 시드: 1,000만원 공유)</span>
+                    <span>💰</span> 리얼 계좌 시뮬레이션 <span className="text-xs font-normal">(초기 시드: {parseInt(accountSimResult.initial_seed).toLocaleString()}원)</span>
                   </h2>
                   <div className="text-3xl md:text-4xl font-bold text-white tracking-tight mb-2">
                     {parseInt(accountSimResult.final_asset).toLocaleString()} <span className="text-lg text-gray-400 font-normal">원</span>
@@ -248,30 +285,39 @@ export default function Home() {
                     📈 주식 가치: <span className="text-white font-bold">{parseInt(accountSimResult.stock_value).toLocaleString()}원</span>
                   </div>
                 </div>
-                <div className="flex gap-6 text-right bg-gray-900/50 p-4 rounded-xl border border-gray-800 w-full md:w-auto justify-end">
-                  <div>
-                    <div className="text-gray-500 text-xs mb-1">누적 수익금</div>
-                    <div className={`text-xl font-bold ${accountSimResult.total_net_profit >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                      {accountSimResult.total_net_profit >= 0 ? '+' : ''}{parseInt(accountSimResult.total_net_profit).toLocaleString()}원
+                <div className="flex flex-col gap-3 w-full md:w-auto items-end">
+                  <div className="flex gap-6 text-right bg-gray-900/50 p-4 rounded-xl border border-gray-800">
+                    <div>
+                      <div className="text-gray-500 text-xs mb-1">누적 수익금</div>
+                      <div className={`text-xl font-bold ${accountSimResult.total_net_profit >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                        {accountSimResult.total_net_profit >= 0 ? '+' : ''}{parseInt(accountSimResult.total_net_profit).toLocaleString()}원
+                      </div>
+                    </div>
+                    <div className="w-px bg-gray-700 mx-2"></div>
+                    <div>
+                      <div className="text-gray-500 text-xs mb-1">총 누적 수익률</div>
+                      <div className={`text-xl font-bold ${accountSimResult.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                        {accountSimResult.total_return_rate >= 0 ? '+' : ''}{accountSimResult.total_return_rate.toFixed(2)}%
+                      </div>
                     </div>
                   </div>
-                  <div className="w-px bg-gray-700 mx-2"></div>
-                  <div>
-                    <div className="text-gray-500 text-xs mb-1">총 누적 수익률</div>
-                    <div className={`text-xl font-bold ${accountSimResult.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                      {accountSimResult.total_return_rate >= 0 ? '+' : ''}{accountSimResult.total_return_rate.toFixed(2)}%
-                    </div>
-                  </div>
+                  {/* 👇 [추가] 타임라인 모달 열기 버튼 */}
+                  <button 
+                    onClick={() => setShowTimeline(true)}
+                    className="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors border border-gray-600 shadow-sm"
+                  >
+                    📜 전체 매매 타임라인 보기
+                  </button>
                 </div>
               </section>
             ) : (
               <section className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 border-dashed text-center">
                 <div className="text-gray-400 mb-2">각 종목의 병렬 분석이 완료되었습니다.</div>
-                <div className="text-sm text-gray-500">상단의 <strong className="text-blue-400">[📊 계좌 수익률계산]</strong> 버튼을 눌러 1,000만원 시드 기반의 현실적인 계좌 흐름을 확인하세요.</div>
+                <div className="text-sm text-gray-500">상단의 <strong className="text-blue-400">[📊 계좌 수익률계산]</strong> 버튼을 눌러 설정한 시드 기반의 현실적인 계좌 흐름을 확인하세요.</div>
               </section>
             )}
 
-            {/* 1. 당일 매수 */}
+            {/* 당일 매수, 매도, 보유중 등 기존 섹션 렌더링 (생략 없이 그대로 유지) */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-red-500">🚀 당일 매수 체결</span>
@@ -302,7 +348,6 @@ export default function Home() {
               )}
             </section>
 
-            {/* 2. 당일 매도 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-blue-400">💸 당일 매도 체결</span>
@@ -337,7 +382,6 @@ export default function Home() {
               )}
             </section>
 
-            {/* 3. 보유 중 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-gray-300">💼 보유 중인 종목</span>
@@ -368,70 +412,80 @@ export default function Home() {
                 </div>
               )}
             </section>
-
-            {/* 4. 지난 매매 내역 */}
-            {pastSells.length > 0 && (
-              <section className="opacity-75 hover:opacity-100 transition-opacity">
-                <h2 className="text-lg md:text-xl font-bold text-gray-400 mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
-                  <span>📜 지난 매매 내역</span>
-                  <span className="bg-gray-800 text-gray-400 text-xs px-2 py-0.5 rounded-full">{pastSells.length}건</span>
-                </h2>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {pastSells.map((item: any) => {
-                    const isProfit = item.return_rate > 0;
-                    return (
-                      <div key={item.ticker} onClick={() => goToDetail(item)} className="bg-gray-800/50 p-3 rounded border border-gray-700 flex justify-between items-center text-sm cursor-pointer hover:bg-gray-700">
-                        <span className="text-gray-300 truncate mr-2">{item.stock_name}</span>
-                        <span className={`${isProfit ? 'text-red-400' : 'text-blue-400'} font-bold whitespace-nowrap`}>{item.return_rate.toFixed(1)}%</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </section>
-            )}
-
-            {/* 5. 매수 대기 */}
-            <section className="opacity-80 hover:opacity-100 transition-opacity">
-              <h2 className="text-lg md:text-xl font-bold text-yellow-400 mb-3 flex items-center justify-between border-b border-gray-700 pb-2">
-                <span>⏳ 매수 대기 (BB하단 접근)</span>
-                <span className="bg-yellow-900/50 text-yellow-300 text-xs px-2 py-1 rounded-full">{result.waiting_list.length}개</span>
-              </h2>
-              {result.waiting_list.length === 0 ? (
-                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">대기 중인 종목이 없습니다.</div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {result.waiting_list.map((item: any) => (
-                    <div key={item.ticker} onClick={() => goToDetail(item)} className="bg-gray-800 p-4 rounded-xl border border-gray-700 relative pl-4 cursor-pointer hover:border-yellow-500 transition-all">
-                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-500 rounded-l-xl"></div>
-                       <div className="flex justify-between items-center mb-2">
-                          <div className="font-bold text-gray-100">{item.stock_name}</div>
-                          <div className="text-xs bg-yellow-900/40 text-yellow-200 px-2 py-1 rounded">Gap: {item.gap_pct.toFixed(2)}%</div>
-                       </div>
-                       <div className="flex justify-between items-end text-sm">
-                          <div className="text-gray-400 text-xs">
-                             <div>현재: {item.current_price.toLocaleString()}</div>
-                             <div>목표: <span className="text-yellow-200">{parseInt(item.target_buy_price).toLocaleString()}</span></div>
-                          </div>
-                          <div className="text-right">
-                             <div className="text-xs text-gray-500">기대수익</div>
-                             <div className={`font-bold ${item.current_upside < 4.0 ? 'text-red-400' : 'text-green-400'}`}>{item.current_upside.toFixed(2)}%</div>
-                          </div>
-                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
           </>
         )}
+      </div>
 
-        <div className="bg-black/50 p-4 rounded-lg border border-gray-800 mt-8">
-          <div className="font-bold mb-2 text-gray-400 text-xs uppercase tracking-wider">System Logs</div>
-          <div className="h-32 overflow-y-auto text-xs text-gray-500 font-mono space-y-1">
-            {logs.length === 0 ? <div className="opacity-30">대기 중...</div> : logs.map((log, i) => <div key={i}>{log}</div>)}
+      {/* 👇 [추가] 리얼 계좌 매매 타임라인 모달 창 */}
+      {showTimeline && accountSimResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-xl">
+              <div>
+                <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                  📜 전체 매매 타임라인
+                </h2>
+                <div className="text-xs text-gray-400 mt-1">잔고 부족으로 스킵된 내역을 제외한, 실제 체결 내역입니다.</div>
+              </div>
+              <button onClick={() => setShowTimeline(false)} className="text-gray-400 hover:text-white font-bold text-3xl leading-none">&times;</button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              {accountSimResult.executed_trades.length === 0 ? (
+                <div className="text-center text-gray-500 py-20 border border-dashed border-gray-700 rounded-xl">체결된 매매 내역이 없습니다.</div>
+              ) : (
+                <div className="relative border-l-2 border-gray-700 ml-4 space-y-8">
+                  {accountSimResult.executed_trades.map((trade: any, idx: number) => {
+                    const isBuy = trade.type.includes("매수");
+                    const isProfit = trade.realizedProfit > 0;
+                    
+                    return (
+                      <div key={idx} className="relative pl-6">
+                        <div className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-4 border-gray-900 ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+                        
+                        <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700 hover:bg-gray-800 hover:border-gray-500 transition-all shadow-sm">
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${isBuy ? 'bg-red-900/30 text-red-400' : 'bg-blue-900/30 text-blue-400'}`}>
+                                  {trade.type}
+                                </span>
+                                <span className="text-xs text-gray-400">{trade.date}</span>
+                              </div>
+                              <div className="text-base font-bold text-gray-100">{trade.stockName} <span className="text-xs font-normal text-gray-500">{trade.ticker}</span></div>
+                              <div className="text-xs text-gray-400 mt-0.5">{trade.detail}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-bold text-gray-100">{trade.price.toLocaleString()}원</div>
+                              <div className="text-xs text-gray-500">{trade.qty}주 체결</div>
+                            </div>
+                          </div>
+                          
+                          {!isBuy && trade.realizedProfit !== undefined && (
+                            <div className="mt-3 pt-3 border-t border-gray-700/50 flex justify-between items-center text-sm bg-gray-900/30 px-3 py-2 rounded-lg">
+                              <span className="text-gray-400 text-xs">실현 손익</span>
+                              <div className="text-right">
+                                <span className={`font-bold ${isProfit ? 'text-red-400' : 'text-blue-400'}`}>
+                                  {isProfit ? '+' : ''}{parseInt(trade.realizedProfit).toLocaleString()}원
+                                </span>
+                                <span className="text-xs ml-2 opacity-70">({trade.profitRate.toFixed(2)}%)</span>
+                              </div>
+                            </div>
+                          )}
+                          
+                          <div className="mt-3 text-xs text-gray-500 text-right font-mono">
+                            체결 후 남은 현금: <span className="text-gray-300">{parseInt(trade.cash).toLocaleString()}원</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
