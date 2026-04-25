@@ -13,9 +13,7 @@ export default function Home() {
   const [accountSimResult, setAccountSimResult] = useState<any>(null);
   
   const [initialSeed, setInitialSeed] = useState(10000000);
-  const [investRatio, setInvestRatio] = useState(10); // 10%
-  
-  const [showTimeline, setShowTimeline] = useState(false);
+  const [investRatio, setInvestRatio] = useState(10);
 
   useEffect(() => {
     const savedResult = sessionStorage.getItem('backtestResult');
@@ -91,8 +89,11 @@ export default function Home() {
     let allEvents: any[] = [];
     let executedTrades: any[] = []; 
 
-    // 👇 [수정] 매수할 때마다 사용할 '고정 금액' (예: 1000만원의 10% = 무조건 100만원씩)
     const fixedInvestAmount = initialSeed * (investRatio / 100);
+
+    // 👇 [추가] 그래프를 그리기 위한 실현 자산 추적 변수
+    let currentRealizedAsset = initialSeed;
+    const dailyAssetMap = new Map();
 
     const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
     const uniqueStocks = new Map();
@@ -116,7 +117,6 @@ export default function Home() {
 
       if (type.includes("매수 (진입)")) {
         if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-          // 👇 [수정] 남은 현금이 아닌 고정 금액(fixedInvestAmount) 기준으로 수량 계산
           const qty = Math.floor(fixedInvestAmount / numPrice);
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
@@ -127,7 +127,6 @@ export default function Home() {
         }
       } else if (type.includes("매수 (물타기)")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          // 👇 [수정] 물타기도 초기 고정 금액(fixedInvestAmount)과 동일한 비중으로 진입
           const qty = Math.floor(fixedInvestAmount / numPrice);
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
@@ -151,9 +150,20 @@ export default function Home() {
           cash += revenue; 
           portfolio[ticker].holdings = 0;
           executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail, realizedProfit, profitRate });
+          
+          // 👇 [추가] 매도 시 실현 자산 업데이트
+          currentRealizedAsset += realizedProfit;
         }
       }
+      
+      // 👇 [추가] 해당 날짜의 최종 실현 자산을 기록 (그래프용)
+      dailyAssetMap.set(date, currentRealizedAsset);
     });
+
+    // 👇 [추가] 맵 데이터를 배열로 변환하여 차트 데이터 규격에 맞춤
+    const equityCurve = Array.from(dailyAssetMap.entries())
+      .map(([date, val]) => ({ time: date, value: val }))
+      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
     let stockValue = 0;
     Object.keys(portfolio).forEach(ticker => {
@@ -174,7 +184,8 @@ export default function Home() {
       total_return_rate: totalReturnRate,
       cash: cash,
       stock_value: stockValue,
-      executed_trades: executedTrades 
+      executed_trades: executedTrades,
+      equity_curve: equityCurve // 차트 데이터 추가
     };
 
     setAccountSimResult(simData);
@@ -300,11 +311,12 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+                  {/* 👇 [수정] 모달 대신 새로운 페이지(/timeline)로 이동하도록 변경 */}
                   <button 
-                    onClick={() => setShowTimeline(true)}
-                    className="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors border border-gray-600 shadow-sm"
+                    onClick={() => router.push('/timeline')}
+                    className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold py-2.5 px-5 rounded-lg transition-colors border border-blue-500 shadow-md flex items-center gap-2"
                   >
-                    📜 전체 매매 타임라인 보기
+                    <span>📈</span> 전체 매매 타임라인 & 차트 보기
                   </button>
                 </div>
               </section>
@@ -315,6 +327,7 @@ export default function Home() {
               </section>
             )}
 
+            {/* 당일 매수, 매도, 보유중 등 기존 섹션 렌더링 (생략 없이 그대로 유지) */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-red-500">🚀 당일 매수 체결</span>
@@ -412,76 +425,6 @@ export default function Home() {
           </>
         )}
       </div>
-
-      {showTimeline && accountSimResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
-            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-xl">
-              <div>
-                <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
-                  📜 전체 매매 타임라인
-                </h2>
-                <div className="text-xs text-gray-400 mt-1">잔고 부족으로 스킵된 내역을 제외한, 실제 체결 내역입니다.</div>
-              </div>
-              <button onClick={() => setShowTimeline(false)} className="text-gray-400 hover:text-white font-bold text-3xl leading-none">&times;</button>
-            </div>
-            
-            <div className="p-6 overflow-y-auto flex-1">
-              {accountSimResult.executed_trades.length === 0 ? (
-                <div className="text-center text-gray-500 py-20 border border-dashed border-gray-700 rounded-xl">체결된 매매 내역이 없습니다.</div>
-              ) : (
-                <div className="relative border-l-2 border-gray-700 ml-4 space-y-8">
-                  {accountSimResult.executed_trades.map((trade: any, idx: number) => {
-                    const isBuy = trade.type.includes("매수");
-                    const isProfit = trade.realizedProfit > 0;
-                    
-                    return (
-                      <div key={idx} className="relative pl-6">
-                        <div className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-4 border-gray-900 ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}></div>
-                        
-                        <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700 hover:bg-gray-800 hover:border-gray-500 transition-all shadow-sm">
-                          <div className="flex justify-between items-start mb-3">
-                            <div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${isBuy ? 'bg-red-900/30 text-red-400' : 'bg-blue-900/30 text-blue-400'}`}>
-                                  {trade.type}
-                                </span>
-                                <span className="text-xs text-gray-400">{trade.date}</span>
-                              </div>
-                              <div className="text-base font-bold text-gray-100">{trade.stockName} <span className="text-xs font-normal text-gray-500">{trade.ticker}</span></div>
-                              <div className="text-xs text-gray-400 mt-0.5">{trade.detail}</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-bold text-gray-100">{trade.price.toLocaleString()}원</div>
-                              <div className="text-xs text-gray-500">{trade.qty}주 체결</div>
-                            </div>
-                          </div>
-                          
-                          {!isBuy && trade.realizedProfit !== undefined && (
-                            <div className="mt-3 pt-3 border-t border-gray-700/50 flex justify-between items-center text-sm bg-gray-900/30 px-3 py-2 rounded-lg">
-                              <span className="text-gray-400 text-xs">실현 손익</span>
-                              <div className="text-right">
-                                <span className={`font-bold ${isProfit ? 'text-red-400' : 'text-blue-400'}`}>
-                                  {isProfit ? '+' : ''}{parseInt(trade.realizedProfit).toLocaleString()}원
-                                </span>
-                                <span className="text-xs ml-2 opacity-70">({trade.profitRate.toFixed(2)}%)</span>
-                              </div>
-                            </div>
-                          )}
-                          
-                          <div className="mt-3 text-xs text-gray-500 text-right font-mono">
-                            체결 후 남은 현금: <span className="text-gray-300">{parseInt(trade.cash).toLocaleString()}원</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
