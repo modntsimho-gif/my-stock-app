@@ -9,8 +9,9 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
   const [chartData, setChartData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // 차트 기간 상태 관리 (기본값 'd' = 일봉)
   const [timeframe, setTimeframe] = useState<'d' | 'w' | 'm'>('d');
+  // 👇 [추가] 클릭한 날짜를 저장할 상태
+  const [focusDate, setFocusDate] = useState<string | null>(null);
 
   useEffect(() => {
     const savedData = sessionStorage.getItem('currentStockDetail');
@@ -35,9 +36,19 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
     }
   }, [router, timeframe]);
 
+  // 👇 [추가] 타임라인 클릭 핸들러
+  const handleLogClick = (date: string) => {
+    // 주봉/월봉 상태라면 일봉으로 변경 (정확한 날짜 마커를 보기 위함)
+    if (timeframe !== 'd') {
+      setTimeframe('d');
+    }
+    setFocusDate(date);
+    // 차트가 있는 화면 상단으로 부드럽게 스크롤 이동
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   if (!stockData) return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">로딩 중...</div>;
 
-  // 종목 상태에 따른 라벨 및 데이터 동적 계산 로직
   let displayRate = 0;
   let rateLabel = "수익률";
   let priceLabel = "평균단가";
@@ -61,7 +72,6 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans md:font-mono pb-10">
-      {/* 상단 네비게이션 */}
       <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 p-4 flex items-center gap-4 shadow-sm">
         <button 
           onClick={() => router.back()} 
@@ -120,17 +130,18 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
               <TradingViewChart 
                 data={chartData} 
                 tradeHistory={timeframe === 'd' ? (stockData.trade_history || []) : []} 
+                focusDate={focusDate} // 👈 포커스 날짜 전달
               />
             )}
           </div>
         </div>
 
-        {/* 3. 상세 매매 로그 (타임라인 UI 적용) */}
+        {/* 3. 상세 매매 로그 (클릭 기능 추가) */}
         <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 shadow-lg">
           <div className="flex justify-between items-end mb-6">
             <div>
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Transaction Flow</h2>
-              <span className="text-xs text-gray-500 font-normal">매매 흐름 타임라인</span>
+              <span className="text-xs text-gray-500 font-normal">내역을 클릭하면 차트가 해당 날짜로 이동합니다</span>
             </div>
             <div className="text-xs text-gray-400">
               총 <span className="text-white font-bold">{stockData.trade_history?.length || 0}</span>건의 기록
@@ -141,24 +152,27 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
             <div className="text-center text-gray-500 py-10 bg-gray-900/30 rounded-lg border border-gray-800 border-dashed">매매 기록이 없습니다.</div>
           ) : (
             <div className="relative border-l-2 border-gray-700 ml-3 space-y-6">
-              {/* 최신순 정렬을 위해 배열 복사 후 뒤집기 */}
               {[...stockData.trade_history].reverse().map((log: any, idx: number) => {
                 const isBuy = log.type.includes("매수");
                 const isProfit = log.realized_profit > 0;
                 
                 return (
-                  <div key={idx} className="relative pl-6">
-                    {/* 타임라인 점 */}
-                    <div className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-4 border-gray-800 ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+                  // 👇 [수정] 클릭 이벤트(onClick) 및 호버 시 강조 효과(group-hover) 추가
+                  <div 
+                    key={idx} 
+                    className="relative pl-6 cursor-pointer group" 
+                    onClick={() => handleLogClick(log.date)}
+                  >
+                    <div className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-4 border-gray-800 transition-transform group-hover:scale-125 ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}></div>
                     
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 hover:bg-gray-800 transition-colors">
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 group-hover:bg-gray-800 group-hover:border-gray-500 transition-all shadow-sm group-hover:shadow-md">
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className={`text-sm font-bold px-2 py-0.5 rounded ${isBuy ? 'bg-red-900/30 text-red-400' : 'bg-blue-900/30 text-blue-400'}`}>
                               {log.type}
                             </span>
-                            <span className="text-xs text-gray-400">{log.date}</span>
+                            <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors">{log.date}</span>
                           </div>
                           <div className="text-sm text-gray-300 mt-1">{log.detail}</div>
                         </div>
@@ -168,7 +182,6 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
                         </div>
                       </div>
                       
-                      {/* 매도일 경우 수익금 강조 영역 */}
                       {!isBuy && log.realized_profit !== undefined && log.realized_profit !== null && (
                         <div className="mt-3 pt-3 border-t border-gray-800 flex justify-between items-center text-sm">
                           <span className="text-gray-400">실현 손익</span>
