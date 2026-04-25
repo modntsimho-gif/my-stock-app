@@ -6,6 +6,11 @@ import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 export default function TimelinePage() {
   const router = useRouter();
   const [simData, setSimData] = useState<any>(null);
+  
+  const [theoreticalMaxSeed, setTheoreticalMaxSeed] = useState<number>(0);
+  const [theoreticalFinalAsset, setTheoreticalFinalAsset] = useState<number>(0);
+  const [theoreticalProfitRate, setTheoreticalProfitRate] = useState<number>(0);
+  
   const [selectedYear, setSelectedYear] = useState<string>("전체");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
@@ -16,8 +21,87 @@ export default function TimelinePage() {
 
   useEffect(() => {
     const savedSim = sessionStorage.getItem('accountSimResult');
-    if (savedSim) {
-      setSimData(JSON.parse(savedSim));
+    const savedResult = sessionStorage.getItem('backtestResult');
+    
+    if (savedSim && savedResult) {
+      const parsedSim = JSON.parse(savedSim);
+      setSimData(parsedSim);
+
+      const result = JSON.parse(savedResult);
+      const investRatio = parsedSim.invest_ratio;
+      const initialSeed = parsedSim.initial_seed;
+
+      let allEvents: any[] = [];
+      const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
+      const uniqueStocks = new Map();
+
+      allStocks.forEach(stock => {
+        if (!uniqueStocks.has(stock.ticker)) {
+          uniqueStocks.set(stock.ticker, stock);
+          if (stock.trade_history && Array.isArray(stock.trade_history)) {
+            stock.trade_history.forEach((trade: any) => {
+              allEvents.push({ ...trade, ticker: stock.ticker });
+            });
+          }
+        }
+      });
+
+      allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      let theoreticalCash = 0; 
+      let minTheoreticalCash = 0;
+      let currentRealizedAsset = initialSeed;
+      let portfolio: Record<string, any> = {};
+      let totalTheoreticalProfit = 0;
+
+      allEvents.forEach(event => {
+        const { type, price, ticker } = event;
+        const numPrice = parseInt(price);
+
+        if (type.includes("매수 (진입)")) {
+          if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
+            const dynamicInvestAmount = currentRealizedAsset * (investRatio / 100);
+            const qty = Math.floor(dynamicInvestAmount / numPrice);
+            if (qty > 0) {
+              const cost = qty * numPrice;
+              theoreticalCash -= cost; 
+              if (theoreticalCash < minTheoreticalCash) minTheoreticalCash = theoreticalCash;
+              portfolio[ticker] = { holdings: qty, avg_price: numPrice, base_invest_amount: dynamicInvestAmount };
+            }
+          }
+        } else if (type.includes("매수 (물타기)")) {
+          if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
+            const qty = Math.floor(portfolio[ticker].base_invest_amount / numPrice);
+            if (qty > 0) {
+              const cost = qty * numPrice;
+              theoreticalCash -= cost; 
+              if (theoreticalCash < minTheoreticalCash) minTheoreticalCash = theoreticalCash;
+              const totalQty = portfolio[ticker].holdings + qty;
+              const totalCost = (portfolio[ticker].holdings * portfolio[ticker].avg_price) + cost;
+              portfolio[ticker].holdings = totalQty;
+              portfolio[ticker].avg_price = totalCost / totalQty;
+            }
+          }
+        } else if (type.includes("매도")) {
+          if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
+            const qty = portfolio[ticker].holdings;
+            const avgPrice = portfolio[ticker].avg_price;
+            const revenue = qty * numPrice;
+            const realizedProfit = revenue - (qty * avgPrice);
+
+            theoreticalCash += revenue; 
+            currentRealizedAsset += realizedProfit; 
+            totalTheoreticalProfit += realizedProfit;
+            portfolio[ticker].holdings = 0;
+          }
+        }
+      });
+
+      const maxSeed = Math.abs(minTheoreticalCash);
+      setTheoreticalMaxSeed(maxSeed);
+      setTheoreticalFinalAsset(maxSeed + totalTheoreticalProfit);
+      setTheoreticalProfitRate(maxSeed > 0 ? (totalTheoreticalProfit / maxSeed) * 100 : 0);
+
     } else {
       router.push('/');
     }
@@ -25,13 +109,9 @@ export default function TimelinePage() {
 
   useEffect(() => {
     const handleScroll = () => {
-      if (window.scrollY > 300) {
-        setShowTopBtn(true);
-      } else {
-        setShowTopBtn(false);
-      }
+      if (window.scrollY > 300) setShowTopBtn(true);
+      else setShowTopBtn(false);
     };
-
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
@@ -105,28 +185,6 @@ export default function TimelinePage() {
     });
   }, [simData]);
 
-  // 👇 [추가] 최대 동시 투자금(필요 시드) 계산 로직
-  const maxRequiredSeed = useMemo(() => {
-    if (!enrichedTrades || enrichedTrades.length === 0) return 0;
-    
-    let currentInvested = 0;
-    let maxInvested = 0;
-    
-    // 시간순으로 정렬된 상태에서 매수/매도에 따른 누적 투자원금을 추적합니다.
-    enrichedTrades.forEach((t: any) => {
-      if (t.type.includes("매수")) {
-        currentInvested += t.tradeAmount; // 매수 시 투자금 증가
-      } else {
-        currentInvested -= t.totalInvested; // 매도 시 해당 종목에 들어갔던 원금 회수
-      }
-      if (currentInvested > maxInvested) {
-        maxInvested = currentInvested;
-      }
-    });
-    
-    return maxInvested;
-  }, [enrichedTrades]);
-
   const filteredTrades = useMemo(() => {
     let result = enrichedTrades;
     if (selectedYear !== "전체") {
@@ -189,25 +247,28 @@ export default function TimelinePage() {
       if (param.time) {
         const dateStr = param.time as string;
         
-        if (sortOrder === "desc") {
-          setSortOrder("asc");
-        }
-        
-        setTimeout(() => {
-          const element = document.querySelector(`[data-date="${dateStr}"]`);
-          if (element) {
-            const y = element.getBoundingClientRect().top + window.scrollY - 140;
-            window.scrollTo({ top: y, behavior: 'smooth' });
-            
-            const innerCard = element.querySelector('.trade-card');
-            if (innerCard) {
-              innerCard.classList.add('ring-4', 'ring-emerald-500', 'bg-gray-700');
-              setTimeout(() => {
-                innerCard.classList.remove('ring-4', 'ring-emerald-500', 'bg-gray-700');
-              }, 2000);
+        // 👇 [수정] 차트 클릭 시 바로 이동하지 않고 사용자에게 확인받기
+        if (window.confirm(`${dateStr} 일자 매매 내역으로 이동하시겠습니까?`)) {
+          if (sortOrder === "desc") setSortOrder("asc");
+          
+          setTimeout(() => {
+            const element = document.querySelector(`[data-date="${dateStr}"]`);
+            if (element) {
+              const y = element.getBoundingClientRect().top + window.scrollY - 140;
+              window.scrollTo({ top: y, behavior: 'smooth' });
+              
+              const innerCard = element.querySelector('.trade-card');
+              if (innerCard) {
+                innerCard.classList.add('ring-4', 'ring-emerald-500', 'bg-gray-700');
+                setTimeout(() => {
+                  innerCard.classList.remove('ring-4', 'ring-emerald-500', 'bg-gray-700');
+                }, 2000);
+              }
+            } else {
+              alert("해당 일자의 상세 내역을 현재 화면에서 찾을 수 없습니다.");
             }
-          }
-        }, 100);
+          }, 100);
+        }
       }
     });
 
@@ -225,34 +286,42 @@ export default function TimelinePage() {
   }, [filteredEquityCurve, sortOrder]);
 
   const handleTickerToggle = (ticker: string) => {
-    if (selectedTicker === ticker) {
-      setSelectedTicker(null); 
-    } else {
-      setSelectedTicker(ticker); 
-    }
+    if (selectedTicker === ticker) setSelectedTicker(null); 
+    else setSelectedTicker(ticker); 
   };
 
   if (!simData) return <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">데이터를 불러오는 중...</div>;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans md:font-mono text-sm pb-20 relative">
+      
       <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 p-4 shadow-lg flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => router.back()}
-              className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded transition-colors flex items-center gap-1"
-            >
-              <span>←</span> 뒤로
-            </button>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>📜</span> 전체 매매 타임라인
-            </h1>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 md:gap-4 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-2 md:gap-4">
+              <button 
+                onClick={() => router.back()}
+                className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded transition-colors flex items-center gap-1 text-xs md:text-sm"
+              >
+                <span>←</span> 뒤로
+              </button>
+              <h1 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                <span>📜</span> 전체 매매 타임라인
+              </h1>
+            </div>
+            {selectedTicker && (
+              <button 
+                onClick={() => setSelectedTicker(null)}
+                className="sm:hidden bg-blue-600/20 text-blue-400 border border-blue-500/50 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-blue-600/40 transition-colors"
+              >
+                필터 해제 ✖
+              </button>
+            )}
           </div>
           {selectedTicker && (
             <button 
               onClick={() => setSelectedTicker(null)}
-              className="bg-blue-600/20 text-blue-400 border border-blue-500/50 px-3 py-1 rounded-full text-xs font-bold hover:bg-blue-600/40 transition-colors"
+              className="hidden sm:block bg-blue-600/20 text-blue-400 border border-blue-500/50 px-3 py-1 rounded-full text-xs font-bold hover:bg-blue-600/40 transition-colors"
             >
               {selectedTicker} 필터 해제 ✖
             </button>
@@ -264,7 +333,7 @@ export default function TimelinePage() {
             <button
               key={year as string}
               onClick={() => setSelectedYear(year as string)}
-              className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors border ${
+              className={`px-4 py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap transition-colors border ${
                 selectedYear === year
                   ? "bg-emerald-600 text-white border-emerald-500 shadow-md"
                   : "bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700"
@@ -276,60 +345,79 @@ export default function TimelinePage() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-8 mt-4">
-        <section className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 shadow-lg">
-          <div className="flex justify-between items-end mb-4">
+      <div className="max-w-5xl mx-auto p-3 md:p-6 space-y-6 md:space-y-8 mt-2 md:mt-4">
+        <section className="bg-gray-800/50 p-4 md:p-6 rounded-2xl border border-gray-700 shadow-lg">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 gap-4">
             <div>
-              <h2 className="text-lg font-bold text-gray-300 mb-1 flex items-center gap-2">
+              <h2 className="text-base md:text-lg font-bold text-gray-300 mb-1 flex items-center gap-2">
                 📈 {selectedYear === "전체" ? "전체" : `${selectedYear}년`} 실현 자산 성장 그래프
               </h2>
-              <div className="text-xs text-gray-500">
+              <div className="text-[11px] md:text-xs text-gray-500">
                 {selectedTicker ? "※ 차트는 계좌 전체의 자산 흐름을 보여줍니다." : "💡 차트의 특정 날짜를 클릭하면 해당 일자의 매매 내역으로 이동합니다."}
               </div>
             </div>
+            
             {selectedYear === "전체" && (
-              <div className="flex gap-6 text-right">
-                {/* 👇 [추가] 최대 필요 시드 표시 영역 */}
-                <div className="bg-gray-900/50 px-4 py-2 rounded-xl border border-gray-700/50">
-                  <div className="text-xs text-gray-400 mb-1">최대 필요 시드 (Peak)</div>
-                  <div className="text-xl font-bold text-blue-400">{parseInt(maxRequiredSeed.toString()).toLocaleString()}원</div>
+              <div className="flex flex-col sm:flex-row gap-3 md:gap-4 w-full md:w-auto mt-3 md:mt-0">
+                
+                <div className="bg-gray-900/50 p-3 md:px-4 md:py-3 rounded-xl border border-gray-700/50 flex flex-col justify-center w-full sm:w-auto">
+                  <div className="text-[11px] md:text-xs text-gray-400 mb-1">현재 설정된 시드 기준 최종 자산</div>
+                  <div className="text-base md:text-xl font-bold text-emerald-400">{parseInt(simData.final_asset).toLocaleString()}원</div>
+                  <div className="text-[10px] text-gray-500 mt-1">시작 시드: {parseInt(simData.initial_seed).toLocaleString()}원</div>
                 </div>
-                <div className="bg-gray-900/50 px-4 py-2 rounded-xl border border-gray-700/50">
-                  <div className="text-xs text-gray-400 mb-1">최종 자산</div>
-                  <div className="text-xl font-bold text-emerald-400">{parseInt(simData.final_asset).toLocaleString()}원</div>
+
+                <div className="bg-gray-800/80 p-3 md:px-4 md:py-3 rounded-xl border border-blue-900/50 flex flex-col gap-1.5 w-full sm:min-w-[220px]">
+                  <div className="text-[11px] md:text-xs text-blue-300 font-bold border-b border-gray-700/50 pb-1.5 mb-0.5 flex items-center gap-1">
+                    <span>💡</span> 모든 타점 체결 시 (이론상)
+                  </div>
+                  <div className="flex justify-between items-center gap-4">
+                    <span className="text-[11px] md:text-xs text-gray-400">필요 시드 (Max)</span>
+                    <span className="text-xs md:text-sm font-bold text-gray-200">{theoreticalMaxSeed.toLocaleString()}원</span>
+                  </div>
+                  <div className="flex justify-between items-center gap-4">
+                    <span className="text-[11px] md:text-xs text-gray-400">최종 실현 잔고</span>
+                    <span className="text-xs md:text-sm font-bold text-emerald-400">{theoreticalFinalAsset.toLocaleString()}원</span>
+                  </div>
+                  <div className="flex justify-between items-center gap-4">
+                    <span className="text-[11px] md:text-xs text-gray-400">누적 수익률</span>
+                    <span className={`text-xs md:text-sm font-bold ${theoreticalProfitRate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                      {theoreticalProfitRate > 0 ? '+' : ''}{theoreticalProfitRate.toFixed(2)}%
+                    </span>
+                  </div>
                 </div>
+
               </div>
             )}
           </div>
           
           {filteredEquityCurve && filteredEquityCurve.length > 0 ? (
-            <div ref={chartContainerRef} className="w-full h-[300px] relative cursor-pointer" />
+            <div ref={chartContainerRef} className="w-full h-[200px] md:h-[300px] relative cursor-pointer" />
           ) : (
-            <div className="h-[300px] flex items-center justify-center border border-dashed border-gray-700 rounded-xl text-gray-500 bg-gray-900/30">
+            <div className="h-[200px] md:h-[300px] flex items-center justify-center border border-dashed border-gray-700 rounded-xl text-gray-500 bg-gray-900/30">
               해당 기간에 실현 손익(매도)이 발생한 데이터가 없습니다.
             </div>
           )}
         </section>
 
-        <section className="bg-gray-800/30 p-6 rounded-2xl border border-gray-700 shadow-lg">
-          <div className="flex justify-between items-center mb-6 border-b border-gray-700 pb-2">
-            <div className="flex items-center gap-3">
-              <h2 className="text-lg font-bold text-gray-300">상세 체결 내역</h2>
-              <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-lg font-bold">{filteredTrades.length}건</span>
+        <section className="bg-gray-800/30 p-4 md:p-6 rounded-2xl border border-gray-700 shadow-lg">
+          <div className="flex justify-between items-center mb-4 md:mb-6 border-b border-gray-700 pb-2">
+            <div className="flex items-center gap-2 md:gap-3">
+              <h2 className="text-base md:text-lg font-bold text-gray-300">상세 체결 내역</h2>
+              <span className="text-[10px] md:text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-lg font-bold">{filteredTrades.length}건</span>
             </div>
             
             <button 
               onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : "asc")}
-              className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-600 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm"
+              className="text-[11px] md:text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-600 px-2 md:px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm"
             >
-              {sortOrder === "asc" ? "🔽 과거순 (기본)" : "🔼 최신순"}
+              {sortOrder === "asc" ? "🔽 과거순" : "🔼 최신순"}
             </button>
           </div>
           
           {sortedTrades.length === 0 ? (
-            <div className="text-center text-gray-500 py-20 border border-dashed border-gray-700 rounded-xl">체결된 매매 내역이 없습니다.</div>
+            <div className="text-center text-gray-500 py-16 md:py-20 border border-dashed border-gray-700 rounded-xl">체결된 매매 내역이 없습니다.</div>
           ) : (
-            <div className="relative border-l-2 border-gray-700 ml-4 space-y-8">
+            <div className="relative border-l-2 border-gray-700 ml-2 md:ml-4 space-y-5 md:space-y-8">
               {sortedTrades.map((trade: any, idx: number) => {
                 const isBuy = trade.type.includes("매수");
                 const isProfit = trade.realizedProfit > 0;
@@ -337,95 +425,101 @@ export default function TimelinePage() {
                 const isChecked = selectedTicker === trade.ticker;
                 
                 return (
-                  <div key={idx} data-date={trade.date} className={`relative pl-6 transition-opacity duration-300 ${selectedTicker && !isChecked ? 'opacity-30' : 'opacity-100'}`}>
+                  <div key={idx} data-date={trade.date} className={`relative pl-4 md:pl-6 transition-opacity duration-300 ${selectedTicker && !isChecked ? 'opacity-30' : 'opacity-100'}`}>
                     <div className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-4 border-gray-900 ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}></div>
                     
-                    <div className={`trade-card bg-gray-800/60 p-5 rounded-xl border transition-all duration-500 shadow-sm ${isChecked ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-gray-700 hover:bg-gray-700'}`}>
+                    <div className={`trade-card bg-gray-800/60 p-4 md:p-5 rounded-xl border transition-all duration-500 shadow-sm ${isChecked ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-gray-700 hover:bg-gray-700'}`}>
                       
-                      <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 mb-4 border-b border-gray-700/50 pb-4">
-                        <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs font-bold px-2 py-1 rounded ${isBuy ? 'bg-red-900/50 text-red-400' : 'bg-blue-900/50 text-blue-400'}`}>
+                      <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-3 md:gap-4 mb-4 border-b border-gray-700/50 pb-4">
+                        <div className="flex flex-col gap-1.5 md:gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] md:text-xs font-bold px-2 py-0.5 md:py-1 rounded ${isBuy ? 'bg-red-900/50 text-red-400' : 'bg-blue-900/50 text-blue-400'}`}>
                               {trade.type}
                             </span>
-                            <span className="text-sm font-bold text-gray-300">{trade.date}</span>
+                            <span className="text-xs md:text-sm font-bold text-gray-300">{trade.date}</span>
                           </div>
                           
-                          <div className="flex items-center gap-3 mt-1">
+                          <div className="flex items-center gap-2 md:gap-3 mt-1">
                             <input 
                               type="checkbox" 
                               checked={isChecked}
                               onChange={() => handleTickerToggle(trade.ticker)}
-                              className="w-4 h-4 rounded border-gray-500 text-blue-500 focus:ring-blue-500 bg-gray-900 cursor-pointer"
-                              title="이 종목만 모아보기"
+                              className="w-4 h-4 rounded border-gray-500 text-blue-500 focus:ring-blue-500 bg-gray-900 cursor-pointer flex-shrink-0"
                             />
                             <div 
-                              className="text-lg font-bold text-gray-100 cursor-pointer hover:text-blue-400 transition-colors"
+                              className="text-base md:text-lg font-bold text-gray-100 cursor-pointer hover:text-blue-400 transition-colors truncate"
                               onClick={() => handleTickerToggle(trade.ticker)}
                             >
-                              {trade.stockName} <span className="text-sm font-normal text-gray-500">{trade.ticker}</span>
+                              {trade.stockName} <span className="text-xs md:text-sm font-normal text-gray-500">{trade.ticker}</span>
                             </div>
                             
                             <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                goToDetail(trade.ticker);
-                              }}
-                              className="ml-2 text-xs bg-gray-700 hover:bg-blue-600 text-gray-300 hover:text-white px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 shadow-sm"
+                              onClick={(e) => { e.stopPropagation(); goToDetail(trade.ticker); }}
+                              className="hidden md:flex ml-2 text-xs bg-gray-700 hover:bg-blue-600 text-gray-300 hover:text-white px-2.5 py-1 rounded-md transition-colors items-center gap-1 shadow-sm"
+                            >
+                              <span>🔍</span> 상세 차트
+                            </button>
+                          </div>
+                          
+                          <div className="text-[11px] md:text-sm text-gray-400 ml-6 md:ml-7">{trade.detail}</div>
+                          
+                          <div className="md:hidden ml-6 mt-1">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); goToDetail(trade.ticker); }}
+                              className="text-[10px] bg-gray-700 text-gray-300 px-2 py-1 rounded transition-colors flex items-center gap-1 w-max"
                             >
                               <span>🔍</span> 상세 차트 보기
                             </button>
                           </div>
-                          <div className="text-sm text-gray-400 mt-1 ml-7">{trade.detail}</div>
                         </div>
                         
-                        <div className="text-left md:text-right">
-                          <div className="text-xs text-gray-500 mb-1">체결 단가 및 수량</div>
-                          <div className="font-bold text-gray-100">{trade.price.toLocaleString()}원 <span className="text-gray-500 font-normal">× {trade.qty}주</span></div>
+                        <div className="mt-2 md:mt-0 text-left md:text-right bg-gray-900/40 md:bg-transparent p-3 md:p-0 rounded-lg w-full md:w-auto">
+                          <div className="text-[11px] md:text-xs text-gray-500 mb-0.5 md:mb-1">체결 단가 및 수량</div>
+                          <div className="text-sm md:text-base font-bold text-gray-100">{trade.price.toLocaleString()}원 <span className="text-gray-500 font-normal">× {trade.qty}주</span></div>
                           
                           {!isBuy && trade.realizedProfit !== undefined && (
-                            <div className="mt-2 pt-2 border-t border-gray-700/50">
-                              <span className="text-xs text-gray-500 mr-2">실현 손익:</span>
-                              <span className={`font-bold ${isProfit ? 'text-red-400' : 'text-blue-400'}`}>
+                            <div className="mt-2 pt-2 border-t border-gray-700/50 flex justify-between md:justify-end items-center">
+                              <span className="text-[11px] md:text-xs text-gray-500 mr-2">실현 손익:</span>
+                              <span className={`font-bold text-sm md:text-base ${isProfit ? 'text-red-400' : 'text-blue-400'}`}>
                                 {isProfit ? '+' : ''}{parseInt(trade.realizedProfit).toLocaleString()}원
-                                <span className="text-xs ml-1 opacity-80">({trade.profitRate.toFixed(2)}%)</span>
+                                <span className="text-[10px] md:text-xs ml-1 opacity-80">({trade.profitRate.toFixed(2)}%)</span>
                               </span>
                             </div>
                           )}
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 bg-gray-900/40 p-3 rounded-lg border border-gray-700/50">
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">{isBuy ? '이번 체결액' : '총 매도액'}</div>
-                          <div className={`font-bold ${isBuy ? 'text-red-400' : 'text-blue-400'}`}>{parseInt(trade.tradeAmount).toLocaleString()}원</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 bg-gray-900/40 p-3 rounded-lg border border-gray-700/50">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[10px] md:text-xs text-gray-500">{isBuy ? '이번 체결액' : '총 매도액'}</div>
+                          <div className={`text-xs md:text-base font-bold ${isBuy ? 'text-red-400' : 'text-blue-400'}`}>{parseInt(trade.tradeAmount).toLocaleString()}원</div>
                         </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">{isBuy ? '누적 매수원금' : '기존 매수원금'}</div>
-                          <div className="font-bold text-gray-200">{parseInt(trade.totalInvested).toLocaleString()}원</div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[10px] md:text-xs text-gray-500">{isBuy ? '누적 매수원금' : '기존 매수원금'}</div>
+                          <div className="text-xs md:text-base font-bold text-gray-200">{parseInt(trade.totalInvested).toLocaleString()}원</div>
                         </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">{isBuy ? '현재 평단가' : '기존 평단가'}</div>
-                          <div className="font-bold text-gray-200">{parseInt(trade.currentAvgPrice).toLocaleString()}원</div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[10px] md:text-xs text-gray-500">{isBuy ? '현재 평단가' : '기존 평단가'}</div>
+                          <div className="text-xs md:text-base font-bold text-gray-200">{parseInt(trade.currentAvgPrice).toLocaleString()}원</div>
                         </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">{isBuy ? '총 보유 수량' : '매도 수량'}</div>
-                          <div className="font-bold text-gray-200">{trade.totalQty}주</div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[10px] md:text-xs text-gray-500">{isBuy ? '총 보유 수량' : '매도 수량'}</div>
+                          <div className="text-xs md:text-base font-bold text-gray-200">{trade.totalQty}주</div>
                         </div>
                       </div>
                       
-                      <div className="bg-gray-900/80 rounded-lg p-3 text-xs font-mono">
-                        <div className="flex justify-between items-center text-gray-500 mb-1">
-                          <span>거래 전 현금 잔고</span>
+                      <div className="bg-gray-900/80 rounded-lg p-3 md:p-4 text-xs font-mono">
+                        <div className="flex justify-between items-center text-gray-500 mb-1.5">
+                          <span>거래 전 잔고</span>
                           <span>{parseInt(previousCash.toString()).toLocaleString()}원</span>
                         </div>
-                        <div className={`flex justify-between items-center font-bold mb-2 pb-2 border-b border-gray-700/50 ${isBuy ? 'text-red-400' : 'text-blue-400'}`}>
-                          <span>{isBuy ? '출금 (계좌에서 빠짐)' : '입금 (계좌로 들어옴)'}</span>
+                        <div className={`flex justify-between items-center font-bold mb-2.5 pb-2.5 border-b border-gray-700/50 ${isBuy ? 'text-red-400' : 'text-blue-400'}`}>
+                          <span>{isBuy ? '출금 (매수)' : '입금 (매도)'}</span>
                           <span>{isBuy ? '-' : '+'}{parseInt(trade.tradeAmount.toString()).toLocaleString()}원</span>
                         </div>
-                        <div className="flex justify-between items-center text-gray-300 font-bold text-sm">
-                          <span>거래 후 현금 잔고</span>
-                          <span>{parseInt(trade.cash).toLocaleString()}원</span>
+                        <div className="flex justify-between items-center text-gray-200 font-bold text-xs md:text-sm">
+                          <span>거래 후 잔고</span>
+                          <span className="text-emerald-400">{parseInt(trade.cash).toLocaleString()}원</span>
                         </div>
                       </div>
 
@@ -440,12 +534,12 @@ export default function TimelinePage() {
 
       <button
         onClick={scrollToTop}
-        className={`fixed bottom-8 right-8 p-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition-all duration-300 z-50 flex items-center justify-center ${
+        className={`fixed bottom-6 right-6 md:bottom-8 md:right-8 p-3 md:p-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition-all duration-300 z-50 flex items-center justify-center ${
           showTopBtn ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10 pointer-events-none"
         }`}
         title="맨 위로 이동"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
         </svg>
       </button>
