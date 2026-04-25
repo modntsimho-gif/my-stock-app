@@ -201,13 +201,21 @@ export default function Home() {
   let todayBuys: any[] = [];
   let holdings: any[] = [];
   let todaySells: any[] = [];
-  let pastSells: any[] = [];
-  let waitingList: any[] = []; // 👇 대기 종목 변수 추가
+  let waitingList: any[] = []; 
+  let allStockReturns: any[] = []; 
 
   if (result) {
     todayBuys = result.holding_list.filter((item: any) => item.first_buy_date === todayStr);
     holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
-    waitingList = result.waiting_list || []; // 👇 대기 종목 할당
+    
+    // 👇 [수정] 백엔드에서 계산해준 gap_pct와 current_upside를 활용하여 정확히 필터링
+    waitingList = (result.waiting_list || []).filter((item: any) => {
+      // gap_pct: 현재가와 BB하단의 차이 (%)
+      // current_upside: BB하단(또는 현재가) 대비 목표가(BB중단)까지의 기대수익률 (%)
+      const gap = item.gap_pct || 0;
+      const upside = item.current_upside || 0;
+      return gap <= 1.5 && upside >= 3.0;
+    });
     
     const allClosed = [...result.profit_list, ...result.loss_list];
 
@@ -219,13 +227,12 @@ export default function Home() {
       return false;
     });
 
-    pastSells = allClosed.filter((item: any) => {
-      if (item.sell_date) return item.sell_date !== todayStr;
-      if (item.trade_history && item.trade_history.length > 0) {
-        return item.trade_history[item.trade_history.length - 1].date !== todayStr;
-      }
-      return true;
-    });
+    // 👇 [수정] 백엔드의 return_rate 변수를 사용하여 전체 누적 수익률 계산
+    allStockReturns = [...(result.profit_list || []), ...(result.loss_list || []), ...(result.holding_list || [])].map((item: any) => {
+      // 백엔드에서 넘겨준 전략 기준 누적 수익률 (return_rate)
+      const rate = item.return_rate || 0; 
+      return { ...item, displayRate: rate };
+    }).sort((a, b) => b.displayRate - a.displayRate);
   }
 
   return (
@@ -290,7 +297,6 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
-            {/* 👇 [복구] 전략 자체의 단순 누적 통계 패널 */}
             <section className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700">
               <h2 className="text-sm font-bold text-gray-400 mb-3 flex items-center gap-2">
                 <span>📊</span> 전략 기본 통계 <span className="text-xs font-normal">(시드 무관 단순 합산)</span>
@@ -298,14 +304,8 @@ export default function Home() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
                   <div className="text-xs text-gray-500 mb-1">단순 누적 수익률</div>
-                  <div className={`text-xl font-bold ${result.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                    {result.total_return_rate >= 0 ? '+' : ''}{result.total_return_rate?.toFixed(2)}%
-                  </div>
-                </div>
-                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
-                  <div className="text-xs text-gray-500 mb-1">승률 (익절/총매도)</div>
-                  <div className="text-xl font-bold text-white">
-                    {result.win_rate?.toFixed(1)}%
+                  <div className={`text-xl font-bold ${result.summary?.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                    {result.summary?.total_return_rate >= 0 ? '+' : ''}{result.summary?.total_return_rate?.toFixed(2)}%
                   </div>
                 </div>
                 <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
@@ -315,6 +315,10 @@ export default function Home() {
                 <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
                   <div className="text-xs text-gray-500 mb-1">손절 종목 수</div>
                   <div className="text-xl font-bold text-blue-400">{result.loss_list?.length}개</div>
+                </div>
+                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-500 mb-1">현재 보유 종목</div>
+                  <div className="text-xl font-bold text-gray-300">{result.holding_list?.length}개</div>
                 </div>
               </div>
             </section>
@@ -459,32 +463,52 @@ export default function Home() {
               )}
             </section>
 
-            {/* 👇 [복구] 매수 대기 종목 리스트 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-yellow-500">👀 매수 대기 종목</span>
                 <span className="bg-yellow-900/50 text-yellow-300 text-xs px-2 py-0.5 rounded-full">{waitingList.length}개</span>
               </h2>
               {waitingList.length === 0 ? (
-                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">현재 관망 중인 대기 종목이 없습니다.</div>
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">현재 타점에 들어온 대기 종목이 없습니다.</div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {waitingList.map((item: any) => (
-                    <div key={item.ticker} onClick={() => goToDetail(item)} className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 shadow-sm cursor-pointer hover:bg-gray-750 transition-all">
+                    <div key={item.ticker} onClick={() => goToDetail(item)} className="bg-gray-800/50 p-4 rounded-xl border border-yellow-700/50 shadow-sm cursor-pointer hover:bg-gray-750 transition-all">
                       <div className="flex justify-between items-center mb-2">
                         <div>
                           <div className="font-bold text-base text-gray-300">{item.stock_name}</div>
                           <div className="text-xs text-gray-500">{item.ticker}</div>
                         </div>
-                        <div className="text-sm font-bold text-gray-400">{item.current_price.toLocaleString()}원</div>
+                        <div className="text-sm font-bold text-yellow-400">{item.current_price.toLocaleString()}원</div>
                       </div>
-                      <div className="text-xs text-gray-500 bg-gray-900/30 p-2 rounded">
-                        현재 조건에 부합하지 않아 매수 기회를 기다리고 있습니다.
+                      <div className="text-xs text-gray-400 bg-yellow-900/20 p-2 rounded border border-yellow-900/50">
+                        🔥 하단 1.5% 이내 & 기대수익 3% 이상 도달!
                       </div>
                     </div>
                   ))}
                 </div>
               )}
+            </section>
+
+            {/* 👇 [추가] 모든 종목 누적 수익률 카드 그리드 */}
+            <section>
+              <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2 mt-8">
+                <span className="text-purple-400">🏆 모든 종목 누적 수익률</span>
+                <span className="bg-purple-900/50 text-purple-300 text-xs px-2 py-0.5 rounded-full">{allStockReturns.length}개</span>
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {allStockReturns.map((item: any, idx: number) => (
+                  <div key={idx} onClick={() => goToDetail(item)} className="bg-gray-800 p-3 rounded-xl border border-gray-700 shadow-sm cursor-pointer hover:bg-gray-750 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="font-bold text-gray-200 text-sm truncate">{item.stock_name}</div>
+                      <div className="text-xs text-gray-500">{item.ticker}</div>
+                    </div>
+                    <div className={`text-lg font-bold mt-2 text-right ${item.displayRate > 0 ? 'text-red-400' : item.displayRate < 0 ? 'text-blue-400' : 'text-gray-400'}`}>
+                      {item.displayRate > 0 ? '+' : ''}{item.displayRate.toFixed(2)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           </>
         )}
