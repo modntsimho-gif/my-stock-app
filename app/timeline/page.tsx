@@ -9,8 +9,6 @@ export default function TimelinePage() {
   const [selectedYear, setSelectedYear] = useState<string>("전체");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
-  
-  // 👇 [추가] 스크롤 맨 위로 버튼 표시 여부 상태
   const [showTopBtn, setShowTopBtn] = useState(false);
   
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -25,7 +23,6 @@ export default function TimelinePage() {
     }
   }, [router]);
 
-  // 👇 [추가] 스크롤 이벤트 리스너 (일정 높이 이상 스크롤 시 버튼 표시)
   useEffect(() => {
     const handleScroll = () => {
       if (window.scrollY > 300) {
@@ -39,9 +36,33 @@ export default function TimelinePage() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // 👇 [추가] 맨 위로 부드럽게 스크롤하는 함수
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 👇 [추가] 종목 상세 페이지로 이동하는 함수 (보내주신 상세 화면과 연동)
+  const goToDetail = (ticker: string) => {
+    const savedResult = sessionStorage.getItem('backtestResult');
+    if (savedResult) {
+      const result = JSON.parse(savedResult);
+      const allStocks = [
+        ...(result.holding_list || []), 
+        ...(result.profit_list || []), 
+        ...(result.loss_list || []), 
+        ...(result.waiting_list || [])
+      ];
+      const stockDetail = allStocks.find((s: any) => s.ticker === ticker);
+      
+      if (stockDetail) {
+        sessionStorage.setItem('currentStockDetail', JSON.stringify(stockDetail));
+        router.push(`/stock/${ticker}`);
+      } else {
+        alert("종목 상세 정보를 찾을 수 없습니다.");
+      }
+    } else {
+      alert("백테스트 결과 데이터가 없습니다. 메인 화면에서 다시 분석해주세요.");
+      router.push('/');
+    }
   };
 
   const availableYears = useMemo(() => {
@@ -316,6 +337,17 @@ export default function TimelinePage() {
                             >
                               {trade.stockName} <span className="text-sm font-normal text-gray-500">{trade.ticker}</span>
                             </div>
+                            
+                            {/* 👇 [추가] 상세 차트 보기 버튼 */}
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                goToDetail(trade.ticker);
+                              }}
+                              className="ml-2 text-xs bg-gray-700 hover:bg-blue-600 text-gray-300 hover:text-white px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 shadow-sm"
+                            >
+                              <span>🔍</span> 상세 차트 보기
+                            </button>
                           </div>
                           <div className="text-sm text-gray-400 mt-1 ml-7">{trade.detail}</div>
                         </div>
@@ -379,7 +411,6 @@ export default function TimelinePage() {
         </section>
       </div>
 
-      {/* 👇 [추가] 플로팅 맨 위로 가기 버튼 */}
       <button
         onClick={scrollToTop}
         className={`fixed bottom-8 right-8 p-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition-all duration-300 z-50 flex items-center justify-center ${
