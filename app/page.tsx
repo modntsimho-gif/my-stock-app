@@ -12,11 +12,9 @@ export default function Home() {
   
   const [accountSimResult, setAccountSimResult] = useState<any>(null);
   
-  // 👇 [추가] 시뮬레이션 설정 상태 (초기 시드, 1회 투자 비중)
   const [initialSeed, setInitialSeed] = useState(10000000);
   const [investRatio, setInvestRatio] = useState(10); // 10%
   
-  // 👇 [추가] 매매 타임라인 모달 표시 여부
   const [showTimeline, setShowTimeline] = useState(false);
 
   useEffect(() => {
@@ -85,14 +83,16 @@ export default function Home() {
     } catch (err) { alert("통신 중 에러 발생"); } finally { setLoading(false); }
   };
 
-  // 👇 [수정] 입력받은 시드와 비중을 바탕으로 시뮬레이션 계산
   const calculateAccountReturn = () => {
     if (!result) return;
 
     let cash = initialSeed; 
     let portfolio: Record<string, any> = {};
     let allEvents: any[] = [];
-    let executedTrades: any[] = []; // 실제 체결된 내역만 담을 배열
+    let executedTrades: any[] = []; 
+
+    // 👇 [수정] 매수할 때마다 사용할 '고정 금액' (예: 1000만원의 10% = 무조건 100만원씩)
+    const fixedInvestAmount = initialSeed * (investRatio / 100);
 
     const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
     const uniqueStocks = new Map();
@@ -116,8 +116,8 @@ export default function Home() {
 
       if (type.includes("매수 (진입)")) {
         if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-          const investMoney = cash * (investRatio / 100); // 설정한 비중만큼 진입
-          const qty = Math.floor(investMoney / numPrice);
+          // 👇 [수정] 남은 현금이 아닌 고정 금액(fixedInvestAmount) 기준으로 수량 계산
+          const qty = Math.floor(fixedInvestAmount / numPrice);
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
             cash -= cost;
@@ -127,8 +127,8 @@ export default function Home() {
         }
       } else if (type.includes("매수 (물타기)")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          const investMoney = portfolio[ticker].entry_amount; 
-          const qty = Math.floor(investMoney / numPrice);
+          // 👇 [수정] 물타기도 초기 고정 금액(fixedInvestAmount)과 동일한 비중으로 진입
+          const qty = Math.floor(fixedInvestAmount / numPrice);
           if (qty > 0 && cash >= qty * numPrice) { 
             const cost = qty * numPrice;
             cash -= cost;
@@ -174,7 +174,7 @@ export default function Home() {
       total_return_rate: totalReturnRate,
       cash: cash,
       stock_value: stockValue,
-      executed_trades: executedTrades // 체결 내역 저장
+      executed_trades: executedTrades 
     };
 
     setAccountSimResult(simData);
@@ -215,7 +215,6 @@ export default function Home() {
           <span>📈</span> 가자 [반포자이]로 <span className="text-xs text-gray-500 font-normal mt-1">원베일리도 낫베드</span>
         </h1>
         
-        {/* 👇 [추가] 시뮬레이션 설정 패널 */}
         {result && (
           <div className="flex flex-col md:flex-row gap-4 items-center bg-gray-800/50 p-3 rounded-lg border border-gray-700 mb-4">
             <div className="flex items-center gap-2">
@@ -301,7 +300,6 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  {/* 👇 [추가] 타임라인 모달 열기 버튼 */}
                   <button 
                     onClick={() => setShowTimeline(true)}
                     className="bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors border border-gray-600 shadow-sm"
@@ -317,7 +315,6 @@ export default function Home() {
               </section>
             )}
 
-            {/* 당일 매수, 매도, 보유중 등 기존 섹션 렌더링 (생략 없이 그대로 유지) */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
                 <span className="text-red-500">🚀 당일 매수 체결</span>
@@ -416,7 +413,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* 👇 [추가] 리얼 계좌 매매 타임라인 모달 창 */}
       {showTimeline && accountSimResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
