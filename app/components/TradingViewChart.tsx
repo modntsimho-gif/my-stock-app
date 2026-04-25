@@ -9,7 +9,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
 
   useEffect(() => { setIsMounted(true); }, []);
 
-  // 차트 초기화 및 데이터 세팅
   useEffect(() => {
     if (!isMounted || !chartContainerRef.current || data.length === 0) return;
 
@@ -59,8 +58,20 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       wickDownColor: '#3b82f6', 
     });
     mainSeries.setData(candleData);
+
+    // 👇 [추가] 현재가(마지막 종가)를 차트 전체를 가로지르는 선으로 표시
+    if (data.length > 0) {
+      const currentPrice = data[data.length - 1].close;
+      mainSeries.createPriceLine({
+        price: currentPrice,
+        color: '#10b981', // 눈에 띄는 에메랄드 그린 색상
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: '현재가',
+      });
+    }
     
-    // 👇 [수정] 매매 마커에 체결 가격 추가 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => {
         const isBuy = t.type.includes("매수");
@@ -70,7 +81,7 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
           position: isBuy ? 'belowBar' : 'aboveBar',
           color: isBuy ? '#ef4444' : '#3b82f6',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
-          text: isBuy ? `B: ${priceStr}` : `S: ${priceStr}`, // 👈 B: 50,000 형태로 표시
+          text: isBuy ? `B: ${priceStr}` : `S: ${priceStr}`,
           size: 1,
         };
       });
@@ -82,15 +93,19 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       const newRect = entries[0].contentRect;
       if (newRect.width === 0 || newRect.height === 0) return;
       chart.applyOptions({ width: newRect.width, height: newRect.height });
-      try { chart.timeScale().fitContent(); } catch(e) {}
+      // 👇 [수정] 줌인이 풀리는 원인이었던 fitContent() 삭제
     });
     resizeObserver.observe(chartContainerRef.current);
 
-    // 👇 [수정] 초기 화면 표시 범위를 최근 60일에서 30일(약 1달)로 축소
-    if(data.length > 30) {
-        try { chart.timeScale().setVisibleRange({ from: data[data.length - 30].date, to: data[data.length - 1].date }); } 
-        catch(e) { chart.timeScale().fitContent(); }
-    } else { chart.timeScale().fitContent(); }
+    // 👇 [수정] 차트 렌더링이 완전히 끝난 후 안전하게 줌인하도록 setTimeout 적용
+    setTimeout(() => {
+      if(data.length > 30) {
+          try { chart.timeScale().setVisibleRange({ from: data[data.length - 30].date, to: data[data.length - 1].date }); } 
+          catch(e) { console.error("줌인 에러:", e); }
+      } else { 
+          chart.timeScale().fitContent(); 
+      }
+    }, 50);
 
     return () => {
       resizeObserver.disconnect();
@@ -98,13 +113,11 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     };
   }, [data, tradeHistory, isMounted]);
 
-  // focusDate가 변경될 때 해당 날짜로 차트 이동 및 확대
   useEffect(() => {
     if (!chartRef.current || !focusDate || data.length === 0) return;
     
     const targetIndex = data.findIndex(d => d.date === focusDate);
     if (targetIndex !== -1) {
-      // 👇 [수정] 클릭 시 이동하는 범위도 앞뒤 15일(총 30일)로 맞춰서 통일감을 줌
       const fromIndex = Math.max(0, targetIndex - 15);
       const toIndex = Math.min(data.length - 1, targetIndex + 15);
       
