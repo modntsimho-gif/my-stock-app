@@ -89,7 +89,6 @@ export default function Home() {
     let allEvents: any[] = [];
     let executedTrades: any[] = []; 
 
-    // 👇 [수정] 복리 계산을 위해 '현재 총 실현 자산(현금 + 투자원금)'을 추적하는 변수
     let currentRealizedAsset = initialSeed;
     const dailyAssetMap = new Map();
 
@@ -115,7 +114,6 @@ export default function Home() {
 
       if (type.includes("매수 (진입)")) {
         if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-          // 👇 [핵심 로직] 진입 시점의 '전체 계좌 실현 자산'을 기준으로 매수 금액 계산 (복리 적용)
           const dynamicInvestAmount = currentRealizedAsset * (investRatio / 100);
           const qty = Math.floor(dynamicInvestAmount / numPrice);
           
@@ -126,14 +124,13 @@ export default function Home() {
               holdings: qty, 
               avg_price: numPrice, 
               entry_amount: cost,
-              base_invest_amount: dynamicInvestAmount // 👈 물타기 때 쓰기 위해 첫 진입 금액을 기억해둠
+              base_invest_amount: dynamicInvestAmount 
             };
             executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail });
           }
         }
       } else if (type.includes("매수 (물타기)")) {
         if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-          // 👇 [핵심 로직] 물타기는 '첫 진입 시점에 계산해둔 금액'을 동일하게 사용 (정액 분할 매수 유지)
           const qty = Math.floor(portfolio[ticker].base_invest_amount / numPrice);
           
           if (qty > 0 && cash >= qty * numPrice) { 
@@ -163,7 +160,6 @@ export default function Home() {
           portfolio[ticker].entry_amount = 0;
           executedTrades.push({ date, ticker, stockName, type, price: numPrice, qty, cash, detail, realizedProfit, profitRate });
           
-          // 👇 [핵심 로직] 익절/손절 시 실현 자산 업데이트 (다음 종목 진입 시 이 금액을 기준으로 비중이 계산됨)
           currentRealizedAsset += realizedProfit;
         }
       }
@@ -206,10 +202,13 @@ export default function Home() {
   let holdings: any[] = [];
   let todaySells: any[] = [];
   let pastSells: any[] = [];
+  let waitingList: any[] = []; // 👇 대기 종목 변수 추가
 
   if (result) {
     todayBuys = result.holding_list.filter((item: any) => item.first_buy_date === todayStr);
     holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
+    waitingList = result.waiting_list || []; // 👇 대기 종목 할당
+    
     const allClosed = [...result.profit_list, ...result.loss_list];
 
     todaySells = allClosed.filter((item: any) => {
@@ -291,6 +290,35 @@ export default function Home() {
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-8">
         {result && (
           <>
+            {/* 👇 [복구] 전략 자체의 단순 누적 통계 패널 */}
+            <section className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700">
+              <h2 className="text-sm font-bold text-gray-400 mb-3 flex items-center gap-2">
+                <span>📊</span> 전략 기본 통계 <span className="text-xs font-normal">(시드 무관 단순 합산)</span>
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-500 mb-1">단순 누적 수익률</div>
+                  <div className={`text-xl font-bold ${result.total_return_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                    {result.total_return_rate >= 0 ? '+' : ''}{result.total_return_rate?.toFixed(2)}%
+                  </div>
+                </div>
+                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-500 mb-1">승률 (익절/총매도)</div>
+                  <div className="text-xl font-bold text-white">
+                    {result.win_rate?.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-500 mb-1">익절 종목 수</div>
+                  <div className="text-xl font-bold text-red-400">{result.profit_list?.length}개</div>
+                </div>
+                <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
+                  <div className="text-xs text-gray-500 mb-1">손절 종목 수</div>
+                  <div className="text-xl font-bold text-blue-400">{result.loss_list?.length}개</div>
+                </div>
+              </div>
+            </section>
+
             {accountSimResult ? (
               <section className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
                 <div>
@@ -427,6 +455,34 @@ export default function Home() {
                       </div>
                      )
                   })}
+                </div>
+              )}
+            </section>
+
+            {/* 👇 [복구] 매수 대기 종목 리스트 */}
+            <section>
+              <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span className="text-yellow-500">👀 매수 대기 종목</span>
+                <span className="bg-yellow-900/50 text-yellow-300 text-xs px-2 py-0.5 rounded-full">{waitingList.length}개</span>
+              </h2>
+              {waitingList.length === 0 ? (
+                <div className="p-6 text-center bg-gray-800/30 rounded-lg text-gray-500 border border-gray-800 border-dashed">현재 관망 중인 대기 종목이 없습니다.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {waitingList.map((item: any) => (
+                    <div key={item.ticker} onClick={() => goToDetail(item)} className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 shadow-sm cursor-pointer hover:bg-gray-750 transition-all">
+                      <div className="flex justify-between items-center mb-2">
+                        <div>
+                          <div className="font-bold text-base text-gray-300">{item.stock_name}</div>
+                          <div className="text-xs text-gray-500">{item.ticker}</div>
+                        </div>
+                        <div className="text-sm font-bold text-gray-400">{item.current_price.toLocaleString()}원</div>
+                      </div>
+                      <div className="text-xs text-gray-500 bg-gray-900/30 p-2 rounded">
+                        현재 조건에 부합하지 않아 매수 기회를 기다리고 있습니다.
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
