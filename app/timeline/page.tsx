@@ -7,10 +7,6 @@ export default function TimelinePage() {
   const router = useRouter();
   const [simData, setSimData] = useState<any>(null);
   
-  const [theoreticalMaxSeed, setTheoreticalMaxSeed] = useState<number>(0);
-  const [theoreticalFinalAsset, setTheoreticalFinalAsset] = useState<number>(0);
-  const [theoreticalProfitRate, setTheoreticalProfitRate] = useState<number>(0);
-  
   const [selectedYear, setSelectedYear] = useState<string>("전체");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
@@ -21,87 +17,8 @@ export default function TimelinePage() {
 
   useEffect(() => {
     const savedSim = sessionStorage.getItem('accountSimResult');
-    const savedResult = sessionStorage.getItem('backtestResult');
-    
-    if (savedSim && savedResult) {
-      const parsedSim = JSON.parse(savedSim);
-      setSimData(parsedSim);
-
-      const result = JSON.parse(savedResult);
-      const investRatio = parsedSim.invest_ratio;
-      const initialSeed = parsedSim.initial_seed;
-
-      let allEvents: any[] = [];
-      const allStocks = [...(result.holding_list || []), ...(result.profit_list || []), ...(result.loss_list || []), ...(result.waiting_list || [])];
-      const uniqueStocks = new Map();
-
-      allStocks.forEach(stock => {
-        if (!uniqueStocks.has(stock.ticker)) {
-          uniqueStocks.set(stock.ticker, stock);
-          if (stock.trade_history && Array.isArray(stock.trade_history)) {
-            stock.trade_history.forEach((trade: any) => {
-              allEvents.push({ ...trade, ticker: stock.ticker });
-            });
-          }
-        }
-      });
-
-      allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-      let theoreticalCash = 0; 
-      let minTheoreticalCash = 0;
-      let currentRealizedAsset = initialSeed;
-      let portfolio: Record<string, any> = {};
-      let totalTheoreticalProfit = 0;
-
-      allEvents.forEach(event => {
-        const { type, price, ticker } = event;
-        const numPrice = parseInt(price);
-
-        if (type.includes("매수 (진입)")) {
-          if (!portfolio[ticker] || portfolio[ticker].holdings === 0) {
-            const dynamicInvestAmount = currentRealizedAsset * (investRatio / 100);
-            const qty = Math.floor(dynamicInvestAmount / numPrice);
-            if (qty > 0) {
-              const cost = qty * numPrice;
-              theoreticalCash -= cost; 
-              if (theoreticalCash < minTheoreticalCash) minTheoreticalCash = theoreticalCash;
-              portfolio[ticker] = { holdings: qty, avg_price: numPrice, base_invest_amount: dynamicInvestAmount };
-            }
-          }
-        } else if (type.includes("매수 (물타기)")) {
-          if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-            const qty = Math.floor(portfolio[ticker].base_invest_amount / numPrice);
-            if (qty > 0) {
-              const cost = qty * numPrice;
-              theoreticalCash -= cost; 
-              if (theoreticalCash < minTheoreticalCash) minTheoreticalCash = theoreticalCash;
-              const totalQty = portfolio[ticker].holdings + qty;
-              const totalCost = (portfolio[ticker].holdings * portfolio[ticker].avg_price) + cost;
-              portfolio[ticker].holdings = totalQty;
-              portfolio[ticker].avg_price = totalCost / totalQty;
-            }
-          }
-        } else if (type.includes("매도")) {
-          if (portfolio[ticker] && portfolio[ticker].holdings > 0) {
-            const qty = portfolio[ticker].holdings;
-            const avgPrice = portfolio[ticker].avg_price;
-            const revenue = qty * numPrice;
-            const realizedProfit = revenue - (qty * avgPrice);
-
-            theoreticalCash += revenue; 
-            currentRealizedAsset += realizedProfit; 
-            totalTheoreticalProfit += realizedProfit;
-            portfolio[ticker].holdings = 0;
-          }
-        }
-      });
-
-      const maxSeed = Math.abs(minTheoreticalCash);
-      setTheoreticalMaxSeed(maxSeed);
-      setTheoreticalFinalAsset(maxSeed + totalTheoreticalProfit);
-      setTheoreticalProfitRate(maxSeed > 0 ? (totalTheoreticalProfit / maxSeed) * 100 : 0);
-
+    if (savedSim) {
+      setSimData(JSON.parse(savedSim));
     } else {
       router.push('/');
     }
@@ -247,7 +164,6 @@ export default function TimelinePage() {
       if (param.time) {
         const dateStr = param.time as string;
         
-        // 👇 [수정] 차트 클릭 시 바로 이동하지 않고 사용자에게 확인받기
         if (window.confirm(`${dateStr} 일자 매매 내역으로 이동하시겠습니까?`)) {
           if (sortOrder === "desc") setSortOrder("asc");
           
@@ -358,34 +274,14 @@ export default function TimelinePage() {
             </div>
             
             {selectedYear === "전체" && (
-              <div className="flex flex-col sm:flex-row gap-3 md:gap-4 w-full md:w-auto mt-3 md:mt-0">
-                
-                <div className="bg-gray-900/50 p-3 md:px-4 md:py-3 rounded-xl border border-gray-700/50 flex flex-col justify-center w-full sm:w-auto">
-                  <div className="text-[11px] md:text-xs text-gray-400 mb-1">현재 설정된 시드 기준 최종 자산</div>
-                  <div className="text-base md:text-xl font-bold text-emerald-400">{parseInt(simData.final_asset).toLocaleString()}원</div>
-                  <div className="text-[10px] text-gray-500 mt-1">시작 시드: {parseInt(simData.initial_seed).toLocaleString()}원</div>
+              <div className="bg-gray-900/50 px-4 py-2 md:py-3 rounded-xl border border-gray-700/50 text-right w-full md:w-auto mt-3 md:mt-0">
+                <div className="text-xs text-gray-400 mb-1">최종 자산</div>
+                <div className="text-lg md:text-2xl font-bold text-emerald-400">
+                  {parseInt(simData.final_asset).toLocaleString()}원
                 </div>
-
-                <div className="bg-gray-800/80 p-3 md:px-4 md:py-3 rounded-xl border border-blue-900/50 flex flex-col gap-1.5 w-full sm:min-w-[220px]">
-                  <div className="text-[11px] md:text-xs text-blue-300 font-bold border-b border-gray-700/50 pb-1.5 mb-0.5 flex items-center gap-1">
-                    <span>💡</span> 모든 타점 체결 시 (이론상)
-                  </div>
-                  <div className="flex justify-between items-center gap-4">
-                    <span className="text-[11px] md:text-xs text-gray-400">필요 시드 (Max)</span>
-                    <span className="text-xs md:text-sm font-bold text-gray-200">{theoreticalMaxSeed.toLocaleString()}원</span>
-                  </div>
-                  <div className="flex justify-between items-center gap-4">
-                    <span className="text-[11px] md:text-xs text-gray-400">최종 실현 잔고</span>
-                    <span className="text-xs md:text-sm font-bold text-emerald-400">{theoreticalFinalAsset.toLocaleString()}원</span>
-                  </div>
-                  <div className="flex justify-between items-center gap-4">
-                    <span className="text-[11px] md:text-xs text-gray-400">누적 수익률</span>
-                    <span className={`text-xs md:text-sm font-bold ${theoreticalProfitRate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                      {theoreticalProfitRate > 0 ? '+' : ''}{theoreticalProfitRate.toFixed(2)}%
-                    </span>
-                  </div>
+                <div className="text-[10px] text-gray-500 mt-1">
+                  시작 시드: {parseInt(simData.initial_seed).toLocaleString()}원
                 </div>
-
               </div>
             )}
           </div>
