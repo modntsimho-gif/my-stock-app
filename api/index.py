@@ -301,6 +301,9 @@ def analyze():
 @app.route('/api/chart')
 def get_chart_data():
     ticker = request.args.get('ticker')
+    # 👇 [추가] 프론트엔드에서 'd'(일), 'w'(주), 'm'(월) 파라미터를 받을 수 있게 추가 (기본값은 'd')
+    freq = request.args.get('freq', 'd') 
+    
     if not ticker:
         return jsonify({"error": "No ticker provided"}), 400
 
@@ -308,7 +311,8 @@ def get_chart_data():
     start_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 5)).strftime("%Y%m%d")
 
     try:
-        df = stock.get_market_ohlcv(start_date, today, ticker, adjusted=True)
+        # 👇 [수정] pykrx에 freq 파라미터 전달
+        df = stock.get_market_ohlcv(start_date, today, ticker, freq=freq, adjusted=True)
         
         if df.empty:
             return jsonify({"error": "Empty data"}), 404

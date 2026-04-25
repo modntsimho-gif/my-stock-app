@@ -34,19 +34,34 @@ export default function TradingViewChart({ data, tradeHistory }: { data: any[], 
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    const bbUpperSeries = chart.addLineSeries({ color: 'rgba(239, 68, 68, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed });
-    bbUpperSeries.setData(bbUpData);
-    
-    const bbLowerSeries = chart.addLineSeries({ color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed });
-    bbLowerSeries.setData(bbDownData);
-
-    const maSeries = chart.addLineSeries({ color: '#fbbf24', lineWidth: 1 });
-    maSeries.setData(ma20Data);
-
-    const mainSeries = chart.addAreaSeries({
-      topColor: 'rgba(34, 197, 94, 0.56)', bottomColor: 'rgba(34, 197, 94, 0.04)', lineColor: '#4ade80', lineWidth: 2,
-    });
-    mainSeries.setData(lineData);
+    // 👇 [디자인 수정] 볼린저 밴드 상단 (쨍한 빨간색, 굵기 2)
+    const bbUpperSeries = chart.addLineSeries({ 
+        color: 'rgba(255, 82, 82, 0.9)', 
+        lineWidth: 2, 
+        lineStyle: LineStyle.Dashed 
+      });
+      bbUpperSeries.setData(bbUpData);
+      
+      // 👇 [디자인 수정] 볼린저 밴드 하단 (쨍한 파란색, 굵기 2)
+      const bbLowerSeries = chart.addLineSeries({ 
+        color: 'rgba(33, 150, 243, 0.9)', 
+        lineWidth: 2, 
+        lineStyle: LineStyle.Dashed 
+      });
+      bbLowerSeries.setData(bbDownData);
+  
+      // 👇 [디자인 수정] 20일 이동평균선 (쨍한 노란색, 굵기 2)
+      const maSeries = chart.addLineSeries({ 
+        color: '#ffeb3b', 
+        lineWidth: 2 
+      });
+      maSeries.setData(ma20Data);
+  
+      // 캔들(영역) 차트 디자인 (기존 유지)
+      const mainSeries = chart.addAreaSeries({
+        topColor: 'rgba(34, 197, 94, 0.56)', bottomColor: 'rgba(34, 197, 94, 0.04)', lineColor: '#4ade80', lineWidth: 2,
+      });
+      mainSeries.setData(lineData);
     
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => ({

@@ -4,32 +4,37 @@ import { useRouter } from "next/navigation";
 import TradingViewChart from "@/app/components/TradingViewChart";
 
 export default function StockDetailPage({ params }: { params: { ticker: string } }) {
-  const router = useRouter();
-  const [stockData, setStockData] = useState<any>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const savedData = sessionStorage.getItem('currentStockDetail');
-    if (savedData) {
-      const parsed = JSON.parse(savedData);
-      setStockData(parsed);
-      
-      fetch(`/api/chart?ticker=${parsed.ticker}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (Array.isArray(data)) {
-            const sorted = data.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-            setChartData(sorted);
-          }
-        })
-        .catch(err => console.error("차트 로딩 실패", err))
-        .finally(() => setLoading(false));
-    } else {
-      alert("종목 정보가 없습니다.");
-      router.push('/');
-    }
-  }, [router]);
+    const router = useRouter();
+    const [stockData, setStockData] = useState<any>(null);
+    const [chartData, setChartData] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    
+    // 👇 [추가] 차트 기간 상태 관리 (기본값 'd' = 일봉)
+    const [timeframe, setTimeframe] = useState<'d' | 'w' | 'm'>('d');
+  
+    useEffect(() => {
+      const savedData = sessionStorage.getItem('currentStockDetail');
+      if (savedData) {
+        const parsed = JSON.parse(savedData);
+        setStockData(parsed);
+        
+        // 👇 [수정] 차트 데이터를 불러올 때 timeframe(freq) 파라미터 추가
+        setLoading(true);
+        fetch(`/api/chart?ticker=${parsed.ticker}&freq=${timeframe}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (Array.isArray(data)) {
+              const sorted = data.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+              setChartData(sorted);
+            }
+          })
+          .catch(err => console.error("차트 로딩 실패", err))
+          .finally(() => setLoading(false));
+      } else {
+        alert("종목 정보가 없습니다.");
+        router.push('/');
+      }
+    }, [router, timeframe]); // 👈 timeframe이 바뀔 때마다 useEffect 다시 실행
 
   if (!stockData) return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">로딩 중...</div>;
 
@@ -100,15 +105,28 @@ export default function StockDetailPage({ params }: { params: { ticker: string }
 
         {/* 2. 대형 차트 영역 */}
         <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 shadow-lg">
-          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex justify-between items-end">
-            <span>Price Chart</span>
-            <span className="text-xs text-gray-500 font-normal">MA20 & Bollinger Bands</span>
-          </h2>
+          <div className="flex justify-between items-end mb-4">
+            <div>
+              <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Price Chart</h2>
+              <span className="text-xs text-gray-500 font-normal">MA20 & Bollinger Bands</span>
+            </div>
+            
+            {/* 👇 [추가] 일봉 / 주봉 / 월봉 전환 버튼 */}
+            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
+              <button onClick={() => setTimeframe('d')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${timeframe === 'd' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>일봉</button>
+              <button onClick={() => setTimeframe('w')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${timeframe === 'w' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>주봉</button>
+              <button onClick={() => setTimeframe('m')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${timeframe === 'm' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>월봉</button>
+            </div>
+          </div>
+
           <div className="h-[500px] w-full relative bg-gray-900/50 rounded-lg overflow-hidden">
             {loading ? (
               <div className="absolute inset-0 flex items-center justify-center text-gray-500">차트 데이터 로딩 중...</div>
             ) : (
-              <TradingViewChart data={chartData} tradeHistory={stockData.trade_history} />
+              <TradingViewChart 
+                data={chartData} 
+                tradeHistory={timeframe === 'd' ? stockData.trade_history : []} 
+              />
             )}
           </div>
         </div>
