@@ -44,10 +44,28 @@ def run_backtest_logic(args):
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.set_index('Date')
 
+    # 1. 볼린저 밴드 계산
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
     df['BB_Lower'] = df['MA20'] - (2 * df['Std'])
+
+    # 👇 2. 일목균형표 계산 추가
+    high_9 = df['High'].rolling(window=9).max()
+    low_9 = df['Low'].rolling(window=9).min()
+    tenkan_sen = (high_9 + low_9) / 2
+
+    high_26 = df['High'].rolling(window=26).max()
+    low_26 = df['Low'].rolling(window=26).min()
+    kijun_sen = (high_26 + low_26) / 2
+
+    df['Senkou_Span1'] = ((tenkan_sen + kijun_sen) / 2).shift(25)
+
+    high_52 = df['High'].rolling(window=52).max()
+    low_52 = df['Low'].rolling(window=52).min()
+    df['Senkou_Span2'] = ((high_52 + low_52) / 2).shift(25)
+
+    # 결측치 제거 (일목균형표 시프트로 인해 초기 약 77일 데이터 제거됨)
     df = df.dropna()
 
     if df.empty: return None
@@ -79,13 +97,11 @@ def run_backtest_logic(args):
             sell_price = 0
             sell_type = ""
             
-            # 👇 1순위: BB 중간값 도달 (우선 체결)
             if row['High'] >= target_mid:
                 sell_signal = True
                 sell_price = row['Open'] if row['Open'] > target_mid else target_mid
                 sell_type = "BB 중간값 도달"
                 
-            # 👇 2순위: 3% 고정 익절 (1순위 조건에 도달하지 못했을 때만 발동)
             elif row['High'] >= target_tp:
                 sell_signal = True
                 sell_price = row['Open'] if row['Open'] > target_tp else target_tp
@@ -94,8 +110,6 @@ def run_backtest_logic(args):
             if sell_signal:
                 revenue = holdings * sell_price
                 profit_rate = (sell_price - avg_price) / avg_price * 100
-                
-                # 이번 단건 매매의 실현 수익금 계산
                 realized_profit = revenue - (holdings * avg_price)
                 
                 trade_history.append({
@@ -148,7 +162,17 @@ def run_backtest_logic(args):
             is_bb_touch = current_price <= bb_lower
             is_enough_room = upside_potential >= 4.0
             
-            if is_bb_touch and is_enough_room:
+            # 👇 구름대 내부 판단 로직
+            senkou1 = row['Senkou_Span1']
+            senkou2 = row['Senkou_Span2']
+            
+            cloud_upper = max(senkou1, senkou2)
+            cloud_lower = min(senkou1, senkou2)
+            
+            is_inside_cloud = (current_price <= cloud_upper) and (current_price >= cloud_lower)
+            
+            # 👇 구름대 내부 조건(is_inside_cloud) 추가
+            if is_bb_touch and is_enough_room and is_inside_cloud:
                 invest_money = cash * 0.1
                 buy_qty = int(invest_money / current_price)
                 if buy_qty > 0:
@@ -163,7 +187,7 @@ def run_backtest_logic(args):
                     trade_history.append({
                         "date": date_str,
                         "type": "매수 (진입)",
-                        "detail": "BB 하단 터치",
+                        "detail": "BB 하단 터치 & 구름대 횡보",
                         "price": clean_nan(current_price),
                         "qty": buy_qty,
                         "profit_rate": 0,
@@ -184,12 +208,22 @@ def run_backtest_logic(args):
     last_ma20 = last_row['MA20']
     last_bb_upper = last_row['BB_Upper']
     
+    # 👇 1. 마지막 날짜(현재)의 구름대 값 추출 및 내부 여부 판별 추가
+    last_senkou1 = last_row['Senkou_Span1']
+    last_senkou2 = last_row['Senkou_Span2']
+    
+    last_cloud_upper = max(last_senkou1, last_senkou2)
+    last_cloud_lower = min(last_senkou1, last_senkou2)
+    
+    is_last_inside_cloud = (last_close <= last_cloud_upper) and (last_close >= last_cloud_lower)
+    
     last_target_mid = (last_ma20 + last_bb_upper) / 2
     if last_close > 0:
         gap_pct = (last_close - last_bb_lower) / last_close * 100
 
     if holdings == 0:
-        if 0 < gap_pct <= WAITING_GAP_LIMIT:
+        # 👇 2. 기존 조건에 is_last_inside_cloud (구름대 내부) 조건 추가
+        if 0 < gap_pct <= WAITING_GAP_LIMIT and is_last_inside_cloud:
             is_waiting = True
             target_buy_price = last_bb_lower
     
@@ -304,7 +338,6 @@ def analyze():
 @app.route('/api/chart')
 def get_chart_data():
     ticker = request.args.get('ticker')
-    # 👇 [추가] 프론트엔드에서 'd'(일), 'w'(주), 'm'(월) 파라미터를 받을 수 있게 추가 (기본값은 'd')
     freq = request.args.get('freq', 'd') 
     
     if not ticker:
@@ -314,7 +347,6 @@ def get_chart_data():
     start_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 5)).strftime("%Y%m%d")
 
     try:
-        # 👇 [수정] pykrx에 freq 파라미터 전달
         df = stock.get_market_ohlcv(start_date, today, ticker, freq=freq, adjusted=True)
         
         if df.empty:
@@ -328,30 +360,50 @@ def get_chart_data():
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.set_index('Date')
 
+        # 볼린저 밴드
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['Std'] = df['Close'].rolling(window=20).std()
         df['BB_Upper'] = df['MA20'] + (2 * df['Std'])
         df['BB_Lower'] = df['MA20'] - (2 * df['Std'])
         
+        # 👇 차트 API에도 일목균형표 추가 (프론트엔드에서 그릴 수 있도록)
+        high_9 = df['High'].rolling(window=9).max()
+        low_9 = df['Low'].rolling(window=9).min()
+        tenkan_sen = (high_9 + low_9) / 2
+
+        high_26 = df['High'].rolling(window=26).max()
+        low_26 = df['Low'].rolling(window=26).min()
+        kijun_sen = (high_26 + low_26) / 2
+
+        df['Senkou_Span1'] = ((tenkan_sen + kijun_sen) / 2).shift(25)
+
+        high_52 = df['High'].rolling(window=52).max()
+        low_52 = df['Low'].rolling(window=52).min()
+        df['Senkou_Span2'] = ((high_52 + low_52) / 2).shift(25)
+
         df = df.dropna()
 
         chart_data = []
+        # 👇 [버그 수정] 기존 코드에 있던 이중 for문(for date, row in df.iterrows(): 가 두 번 반복되던 문제) 제거
         for date, row in df.iterrows():
-            chart_data = []
-            for date, row in df.iterrows():
-                chart_data.append({
-                    "date": date.strftime("%Y-%m-%d"),
-                    # 👇 [추가] 시가, 고가, 저가 데이터 추가
-                    "open": int(row['Open']),
-                    "high": int(row['High']),
-                    "low": int(row['Low']),
-                    "close": int(row['Close']),
-                    "ma20": int(row['MA20']) if not math.isnan(row['MA20']) else None,
-                    "bb_upper": int(row['BB_Upper']) if not math.isnan(row['BB_Upper']) else None,
-                    "bb_lower": int(row['BB_Lower']) if not math.isnan(row['BB_Lower']) else None,
-                })
+            chart_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "open": int(row['Open']),
+                "high": int(row['High']),
+                "low": int(row['Low']),
+                "close": int(row['Close']),
+                "ma20": int(row['MA20']) if not math.isnan(row['MA20']) else None,
+                "bb_upper": int(row['BB_Upper']) if not math.isnan(row['BB_Upper']) else None,
+                "bb_lower": int(row['BB_Lower']) if not math.isnan(row['BB_Lower']) else None,
+                # 프론트엔드 전달용 구름대 데이터 추가
+                "senkou_span1": int(row['Senkou_Span1']) if not math.isnan(row['Senkou_Span1']) else None,
+                "senkou_span2": int(row['Senkou_Span2']) if not math.isnan(row['Senkou_Span2']) else None,
+            })
 
-            return jsonify(chart_data)
+        return jsonify(chart_data)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
