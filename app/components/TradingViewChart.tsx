@@ -19,7 +19,7 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
 
     const chart = createChart(chartContainerRef.current, {
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#9ca3af' },
-      grid: { vertLines: { color: '#374151', style: LineStyle.Dotted }, horzLines: { color: '#374151', style: LineStyle.Dotted } },
+      grid: { vertLines: { color: '#2d3748', style: LineStyle.Dotted }, horzLines: { color: '#2d3748', style: LineStyle.Dotted } },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
       rightPriceScale: { borderColor: '#374151', scaleMargins: { top: 0.1, bottom: 0.1 } },
@@ -41,15 +41,18 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    const bbUpperSeries = chart.addLineSeries({ color: 'rgba(255, 82, 82, 0.9)', lineWidth: 2, lineStyle: LineStyle.Dashed });
+    // 🟡 볼린저 밴드 상단/하단 (노란색 실선)
+    const bbUpperSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1, lineStyle: LineStyle.Solid });
     bbUpperSeries.setData(bbUpData);
     
-    const bbLowerSeries = chart.addLineSeries({ color: 'rgba(33, 150, 243, 0.9)', lineWidth: 2, lineStyle: LineStyle.Dashed });
+    const bbLowerSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1, lineStyle: LineStyle.Solid });
     bbLowerSeries.setData(bbDownData);
 
-    const maSeries = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 2 });
+    // 🟢 20일 이동평균선 (초록색 실선)
+    const maSeries = chart.addLineSeries({ color: '#4ade80', lineWidth: 1, lineStyle: LineStyle.Solid });
     maSeries.setData(ma20Data);
 
+    // 🔴 🔵 캔들 차트 (한국식: 상승 빨강, 하락 파랑)
     const mainSeries = chart.addCandlestickSeries({
       upColor: '#ef4444',       
       downColor: '#3b82f6',     
@@ -59,19 +62,20 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     });
     mainSeries.setData(candleData);
 
-    // 👇 [추가] 현재가(마지막 종가)를 차트 전체를 가로지르는 선으로 표시
+    // 🎯 현재가 점선 (빨간색 점선)
     if (data.length > 0) {
       const currentPrice = data[data.length - 1].close;
       mainSeries.createPriceLine({
         price: currentPrice,
-        color: '#10b981', // 눈에 띄는 에메랄드 그린 색상
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
+        color: '#ef4444', // 빨간색
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted, // 점선 스타일
         axisLabelVisible: true,
-        title: '현재가',
+        title: '', // 텍스트 없이 가격표만 우측에 표시
       });
     }
     
+    // 🏷️ 매매 마커 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => {
         const isBuy = t.type.includes("매수");
@@ -93,11 +97,9 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       const newRect = entries[0].contentRect;
       if (newRect.width === 0 || newRect.height === 0) return;
       chart.applyOptions({ width: newRect.width, height: newRect.height });
-      // 👇 [수정] 줌인이 풀리는 원인이었던 fitContent() 삭제
     });
     resizeObserver.observe(chartContainerRef.current);
 
-    // 👇 [수정] 차트 렌더링이 완전히 끝난 후 안전하게 줌인하도록 setTimeout 적용
     setTimeout(() => {
       if(data.length > 30) {
           try { chart.timeScale().setVisibleRange({ from: data[data.length - 30].date, to: data[data.length - 1].date }); } 
