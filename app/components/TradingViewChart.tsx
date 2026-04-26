@@ -41,18 +41,18 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 🟡 볼린저 밴드 상단/하단 (노란색 실선)
+    // 🟡 볼린저 밴드 상단/하단
     const bbUpperSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1, lineStyle: LineStyle.Solid });
     bbUpperSeries.setData(bbUpData);
     
     const bbLowerSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1, lineStyle: LineStyle.Solid });
     bbLowerSeries.setData(bbDownData);
 
-    // 🟢 20일 이동평균선 (초록색 실선)
+    // 🟢 20일 이동평균선
     const maSeries = chart.addLineSeries({ color: '#4ade80', lineWidth: 1, lineStyle: LineStyle.Solid });
     maSeries.setData(ma20Data);
 
-    // 🔴 🔵 캔들 차트 (한국식: 상승 빨강, 하락 파랑)
+    // 🔴 🔵 캔들 차트
     const mainSeries = chart.addCandlestickSeries({
       upColor: '#ef4444',       
       downColor: '#3b82f6',     
@@ -62,22 +62,25 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     });
     mainSeries.setData(candleData);
 
-    // 🎯 현재가 점선 (빨간색 점선)
+    // 🎯 현재가 점선
     if (data.length > 0) {
       const currentPrice = data[data.length - 1].close;
       mainSeries.createPriceLine({
         price: currentPrice,
-        color: '#ef4444', // 빨간색
+        color: '#ef4444',
         lineWidth: 1,
-        lineStyle: LineStyle.Dotted, // 점선 스타일
-        axisLabelVisible: true,
-        title: '', // 텍스트 없이 가격표만 우측에 표시
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: false, 
+        title: '', 
       });
     }
     
-    // 🏷️ 매매 마커 표시
+    // 🏷️ 매매 마커 및 목표가 마커 표시
+    let markers: any[] = [];
+    
+    // 1. 기존 매매 내역 마커 세팅
     if (tradeHistory && tradeHistory.length > 0) {
-      const markers = tradeHistory.map((t: any) => {
+      markers = tradeHistory.map((t: any) => {
         const isBuy = t.type.includes("매수");
         const priceStr = parseInt(t.price).toLocaleString();
         return {
@@ -89,7 +92,54 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
           size: 1,
         };
       });
-      mainSeries.setMarkers(markers as any[]);
+    }
+
+    // 2. 보유 중일 경우 '오늘 캔들'에만 목표가 마커 추가
+    const lastTrade = tradeHistory && tradeHistory.length > 0 ? tradeHistory[tradeHistory.length - 1] : null;
+    const isHolding = lastTrade && lastTrade.type.includes("매수");
+
+    if (isHolding && data.length > 0) {
+      let totalQty = 0;
+      let totalCost = 0;
+      
+      // 평단가 역산
+      for (let i = tradeHistory.length - 1; i >= 0; i--) {
+        const t = tradeHistory[i];
+        if (t.type.includes("매도")) break;
+        if (t.type.includes("매수")) {
+          totalQty += t.qty;
+          totalCost += (t.price * t.qty);
+        }
+      }
+      
+      const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
+      const lastData = data[data.length - 1]; // 오늘 데이터
+      
+      if (lastData.ma20 && lastData.bb_upper && avgPrice > 0) {
+        // 목표가 조건 비교
+        const targetMid = (lastData.ma20 + lastData.bb_upper) / 2;
+        const targetTp = avgPrice * 1.03;
+        
+        const finalTargetPrice = Math.min(targetMid, targetTp);
+        const labelTitle = finalTargetPrice === targetTp ? '🎯목표(3%)' : '🎯목표(BB)';
+        const priceStr = Math.floor(finalTargetPrice).toLocaleString();
+
+        // 마지막 캔들 위에 보라색 원형 마커 추가
+        markers.push({
+          time: lastData.date,
+          position: 'aboveBar',
+          color: '#a855f7', 
+          shape: 'circle',
+          text: `${labelTitle}: ${priceStr}원`,
+          size: 1,
+        });
+      }
+    }
+
+    // 3. 마커 시간순 정렬 후 차트에 적용
+    if (markers.length > 0) {
+      markers.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+      mainSeries.setMarkers(markers);
     }
 
     const resizeObserver = new ResizeObserver((entries) => {
