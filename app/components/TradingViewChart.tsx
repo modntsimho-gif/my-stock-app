@@ -37,34 +37,10 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       close: d.close 
     }));
     
-    // 볼린저 밴드 및 MA 데이터
     const ma20Data = data.map(d => ({ time: d.date, value: d.ma20 })).filter(d => d.value);
     const bbUpData = data.map(d => ({ time: d.date, value: d.bb_upper })).filter(d => d.value);
     const bbDownData = data.map(d => ({ time: d.date, value: d.bb_lower })).filter(d => d.value);
 
-    // 👇 일목균형표 구름대(선행스팬1, 2) 데이터 추출
-    const senkou1Data = data.map(d => ({ time: d.date, value: d.senkou_span1 })).filter(d => d.value !== null && d.value !== undefined);
-    const senkou2Data = data.map(d => ({ time: d.date, value: d.senkou_span2 })).filter(d => d.value !== null && d.value !== undefined);
-
-    // 👇 선행스팬1 그리기 (초록색 계열)
-    const senkou1Series = chart.addLineSeries({ 
-      color: 'rgba(16, 185, 129, 0.6)', 
-      lineWidth: 1, 
-      lineStyle: LineStyle.Solid,
-      title: '선행스팬1'
-    });
-    senkou1Series.setData(senkou1Data);
-
-    // 👇 선행스팬2 그리기 (주황/빨강 계열)
-    const senkou2Series = chart.addLineSeries({ 
-      color: 'rgba(249, 115, 22, 0.6)', 
-      lineWidth: 1, 
-      lineStyle: LineStyle.Solid,
-      title: '선행스팬2'
-    });
-    senkou2Series.setData(senkou2Data);
-
-    // 볼린저 밴드 그리기
     const bbUpperSeries = chart.addLineSeries({ color: 'rgba(255, 82, 82, 0.9)', lineWidth: 2, lineStyle: LineStyle.Dashed });
     bbUpperSeries.setData(bbUpData);
     
@@ -74,7 +50,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     const maSeries = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 2 });
     maSeries.setData(ma20Data);
 
-    // 캔들스틱 그리기
     const mainSeries = chart.addCandlestickSeries({
       upColor: '#ef4444',       
       downColor: '#3b82f6',     
@@ -84,12 +59,12 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     });
     mainSeries.setData(candleData);
 
-    // 현재가 표시
+    // 👇 [추가] 현재가(마지막 종가)를 차트 전체를 가로지르는 선으로 표시
     if (data.length > 0) {
       const currentPrice = data[data.length - 1].close;
       mainSeries.createPriceLine({
         price: currentPrice,
-        color: '#10b981',
+        color: '#10b981', // 눈에 띄는 에메랄드 그린 색상
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -97,7 +72,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       });
     }
     
-    // 매매 마커 표시
     if (tradeHistory && tradeHistory.length > 0) {
       const markers = tradeHistory.map((t: any) => {
         const isBuy = t.type.includes("매수");
@@ -119,9 +93,11 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       const newRect = entries[0].contentRect;
       if (newRect.width === 0 || newRect.height === 0) return;
       chart.applyOptions({ width: newRect.width, height: newRect.height });
+      // 👇 [수정] 줌인이 풀리는 원인이었던 fitContent() 삭제
     });
     resizeObserver.observe(chartContainerRef.current);
 
+    // 👇 [수정] 차트 렌더링이 완전히 끝난 후 안전하게 줌인하도록 setTimeout 적용
     setTimeout(() => {
       if(data.length > 30) {
           try { chart.timeScale().setVisibleRange({ from: data[data.length - 30].date, to: data[data.length - 1].date }); } 
