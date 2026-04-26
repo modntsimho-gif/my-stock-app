@@ -18,19 +18,20 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     }
 
     const chart = createChart(chartContainerRef.current, {
-      // 1. 배경을 흰색으로, 글자색을 어두운 회색으로 변경
       layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#333333' },
-      // 2. 격자선을 아주 연한 회색으로 변경하여 지저분함 제거
       grid: { vertLines: { color: '#f0f0f0', style: LineStyle.Solid }, horzLines: { color: '#f0f0f0', style: LineStyle.Solid } },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
-      // 3. 축 테두리 색상도 밝게 변경
       rightPriceScale: { borderColor: '#e1e4e8', scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: { borderColor: '#e1e4e8', timeVisible: true, secondsVisible: false },
       crosshair: { 
         mode: CrosshairMode.Normal,
         vertLine: { color: '#999999', style: LineStyle.Dotted },
         horzLine: { color: '#999999', style: LineStyle.Dotted }
+      },
+      // 👇 이 부분을 추가합니다! (소수점 제거 및 3자리 콤마 적용)
+      localization: {
+        priceFormatter: (price: number) => Math.round(price).toLocaleString('ko-KR'),
       },
     });
 
