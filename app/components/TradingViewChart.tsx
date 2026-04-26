@@ -18,13 +18,20 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     }
 
     const chart = createChart(chartContainerRef.current, {
-      layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#9ca3af' },
-      grid: { vertLines: { color: '#2d3748', style: LineStyle.Dotted }, horzLines: { color: '#2d3748', style: LineStyle.Dotted } },
+      // 1. 배경을 흰색으로, 글자색을 어두운 회색으로 변경
+      layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#333333' },
+      // 2. 격자선을 아주 연한 회색으로 변경하여 지저분함 제거
+      grid: { vertLines: { color: '#f0f0f0', style: LineStyle.Solid }, horzLines: { color: '#f0f0f0', style: LineStyle.Solid } },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
-      rightPriceScale: { borderColor: '#374151', scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: { borderColor: '#374151', timeVisible: true, secondsVisible: false },
-      crosshair: { mode: CrosshairMode.Normal },
+      // 3. 축 테두리 색상도 밝게 변경
+      rightPriceScale: { borderColor: '#e1e4e8', scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { borderColor: '#e1e4e8', timeVisible: true, secondsVisible: false },
+      crosshair: { 
+        mode: CrosshairMode.Normal,
+        vertLine: { color: '#999999', style: LineStyle.Dotted },
+        horzLine: { color: '#999999', style: LineStyle.Dotted }
+      },
     });
 
     chartRef.current = chart;
@@ -59,10 +66,12 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       borderVisible: false,
       wickUpColor: '#ef4444',   
       wickDownColor: '#3b82f6', 
+      // 👇 기본으로 제공되는 현재가 라벨을 끕니다 (중복 방지)
+      lastValueVisible: false, 
     });
     mainSeries.setData(candleData);
 
-    // 🎯 현재가 점선
+    // 🎯 현재가 점선 (가로 전체를 가로지르는 빨간 점선 + 우측 빨간 가격표)
     if (data.length > 0) {
       const currentPrice = data[data.length - 1].close;
       mainSeries.createPriceLine({
@@ -70,7 +79,7 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
         color: '#ef4444',
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
-        axisLabelVisible: false, 
+        axisLabelVisible: true, // 👈 우측에 빨간색 가격표가 뜨도록 켭니다
         title: '', 
       });
     }
@@ -78,7 +87,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     // 🏷️ 매매 마커 및 목표가 마커 표시
     let markers: any[] = [];
     
-    // 1. 기존 매매 내역 마커 세팅
     if (tradeHistory && tradeHistory.length > 0) {
       markers = tradeHistory.map((t: any) => {
         const isBuy = t.type.includes("매수");
@@ -94,7 +102,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       });
     }
 
-    // 2. 보유 중일 경우 '오늘 캔들'에만 목표가 마커 추가
     const lastTrade = tradeHistory && tradeHistory.length > 0 ? tradeHistory[tradeHistory.length - 1] : null;
     const isHolding = lastTrade && lastTrade.type.includes("매수");
 
@@ -102,7 +109,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       let totalQty = 0;
       let totalCost = 0;
       
-      // 평단가 역산
       for (let i = tradeHistory.length - 1; i >= 0; i--) {
         const t = tradeHistory[i];
         if (t.type.includes("매도")) break;
@@ -113,10 +119,9 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       }
       
       const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
-      const lastData = data[data.length - 1]; // 오늘 데이터
+      const lastData = data[data.length - 1]; 
       
       if (lastData.ma20 && lastData.bb_upper && avgPrice > 0) {
-        // 목표가 조건 비교
         const targetMid = (lastData.ma20 + lastData.bb_upper) / 2;
         const targetTp = avgPrice * 1.03;
         
@@ -124,7 +129,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
         const labelTitle = finalTargetPrice === targetTp ? '🎯목표(3%)' : '🎯목표(BB)';
         const priceStr = Math.floor(finalTargetPrice).toLocaleString();
 
-        // 마지막 캔들 위에 보라색 원형 마커 추가
         markers.push({
           time: lastData.date,
           position: 'aboveBar',
@@ -136,7 +140,6 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
       }
     }
 
-    // 3. 마커 시간순 정렬 후 차트에 적용
     if (markers.length > 0) {
       markers.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
       mainSeries.setMarkers(markers);
@@ -184,6 +187,7 @@ export default function TradingViewChart({ data, tradeHistory, focusDate }: { da
     }
   }, [focusDate, data]);
 
-  if (!isMounted) return <div className="w-full h-full bg-gray-900/50 animate-pulse rounded-lg" />;
+  // 로딩 중일 때 표시되는 배경색도 밝은 회색으로 변경
+  if (!isMounted) return <div className="w-full h-full bg-gray-100 animate-pulse rounded-lg" />;
   return <div ref={chartContainerRef} className="w-full h-full relative" />;
 }
