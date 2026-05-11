@@ -15,19 +15,12 @@ export default function Home() {
   const [initialSeed, setInitialSeed] = useState(10000000);
   const [investRatio, setInvestRatio] = useState(10);
 
-  // 👇 [추가] 현재 선택된 전략 상태 관리 ('bb' 또는 'volume')
-  const [activeStrategy, setActiveStrategy] = useState<string>("bb");
-
   useEffect(() => {
     const savedResult = sessionStorage.getItem('backtestResult');
     if (savedResult) setResult(JSON.parse(savedResult));
     
     const savedSim = sessionStorage.getItem('accountSimResult');
     if (savedSim) setAccountSimResult(JSON.parse(savedSim));
-
-    // 새로고침 시 기존에 선택했던 전략 유지
-    const savedStrategy = sessionStorage.getItem('activeStrategy');
-    if (savedStrategy) setActiveStrategy(savedStrategy);
   }, []);
 
   const getTodayString = () => {
@@ -47,24 +40,14 @@ export default function Home() {
     router.push(`/stock/${item.ticker}`);
   };
 
-  // 👇 [수정] 어떤 전략을 실행할지 매개변수(strategyType)로 받음
-  const runAnalysis = async (strategyType: string) => {
-    setLoading(true); 
-    setResult(null); 
-    setAccountSimResult(null); 
-    setLogs([]); 
-    setProgress({ current: 0, total: 0 });
-    
-    setActiveStrategy(strategyType);
-    sessionStorage.setItem('activeStrategy', strategyType);
-    
+  const runAnalysis = async () => {
+    setLoading(true); setResult(null); setAccountSimResult(null); setLogs([]); setProgress({ current: 0, total: 0 });
     sessionStorage.removeItem('backtestResult');
     sessionStorage.removeItem('accountSimResult');
     sessionStorage.removeItem('currentStockDetail');
 
     try {
-      // 👇 [수정] API 호출 시 쿼리 파라미터로 전략 종류 전달
-      const response = await fetch(`/api/analyze?strategy=${strategyType}`);
+      const response = await fetch(`/api/analyze`);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) return;
@@ -82,8 +65,7 @@ export default function Home() {
             const data = JSON.parse(trimmedLine);
             if (data.type === "start") {
               setProgress({ current: 0, total: data.total });
-              const strategyName = strategyType === 'bb' ? '볼린저 밴드' : '매물대';
-              setLogs((prev) => [...prev, `🚀 [${strategyName}] 분석 시작... 총 ${data.total}개 종목`]);
+              setLogs((prev) => [...prev, `🚀 분석 시작... 총 ${data.total}개 종목`]);
             } else if (data.type === "progress") {
               setProgress({ current: data.current, total: data.total });
             } else if (data.type === "result") {
@@ -226,16 +208,13 @@ export default function Home() {
     todayBuys = result.holding_list.filter((item: any) => item.first_buy_date === todayStr);
     holdings = result.holding_list.filter((item: any) => item.first_buy_date !== todayStr);
     
-    // 👇 [수정] 선택된 전략에 따라 대기 종목 필터링 로직 분기
+    // 👇 [수정] 백엔드에서 계산해준 gap_pct와 current_upside를 활용하여 정확히 필터링
     waitingList = (result.waiting_list || []).filter((item: any) => {
-      if (activeStrategy === 'bb') {
-        const gap = item.gap_pct || 0;
-        const upside = item.current_upside || 0;
-        return gap <= 1.5 && upside >= 3.0;
-      } else {
-        // 매물대 전략일 경우의 필터링 조건 (백엔드에서 넘겨주는 데이터에 맞춰 수정 가능)
-        return true; 
-      }
+      // gap_pct: 현재가와 BB하단의 차이 (%)
+      // current_upside: BB하단(또는 현재가) 대비 목표가(BB중단)까지의 기대수익률 (%)
+      const gap = item.gap_pct || 0;
+      const upside = item.current_upside || 0;
+      return gap <= 1.5 && upside >= 3.0;
     });
     
     const allClosed = [...result.profit_list, ...result.loss_list];
@@ -248,7 +227,9 @@ export default function Home() {
       return false;
     });
 
+    // 👇 [수정] 백엔드의 return_rate 변수를 사용하여 전체 누적 수익률 계산
     allStockReturns = [...(result.profit_list || []), ...(result.loss_list || []), ...(result.holding_list || [])].map((item: any) => {
+      // 백엔드에서 넘겨준 전략 기준 누적 수익률 (return_rate)
       const rate = item.return_rate || 0; 
       return { ...item, displayRate: rate };
     }).sort((a, b) => b.displayRate - a.displayRate);
@@ -287,37 +268,27 @@ export default function Home() {
         )}
 
         <div>
-          {/* 👇 [수정] 분석 버튼을 2개로 분리하여 배치 */}
-          <div className="flex flex-col md:flex-row gap-2 mb-2">
+          <div className="flex flex-col md:flex-row gap-2">
             <button 
-              onClick={() => runAnalysis('bb')} 
+              onClick={() => runAnalysis()} 
               disabled={loading} 
               className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-500 text-white active:scale-95"}`}
             >
-              {loading && activeStrategy === 'bb' ? `분석 중... (${progress.current}/${progress.total})` : "📉 볼린저 밴드 분석"}
-            </button>
-
-            <button 
-              onClick={() => runAnalysis('volume')} 
-              disabled={loading} 
-              className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-500 text-white active:scale-95"}`}
-            >
-              {loading && activeStrategy === 'volume' ? `분석 중... (${progress.current}/${progress.total})` : "🧱 매물대 돌파 분석"}
+              {loading ? `분석 중... (${progress.current}/${progress.total})` : "🚀 분석 시작"}
             </button>
             
             {result && (
               <button 
                 onClick={calculateAccountReturn}
-                className="w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md bg-blue-600 hover:bg-blue-500 text-white active:scale-95 flex items-center justify-center gap-2 ml-auto"
+                className="w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all shadow-md bg-blue-600 hover:bg-blue-500 text-white active:scale-95 flex items-center justify-center gap-2"
               >
                 <span>📊</span> 계좌 수익률계산
               </button>
             )}
           </div>
-          
           {loading && progress.total > 0 && (
             <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
-              <div className={`h-full transition-all duration-300 ${activeStrategy === 'bb' ? 'bg-green-500' : 'bg-purple-500'}`} style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
+              <div className="bg-green-500 h-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
             </div>
           )}
         </div>
@@ -328,8 +299,7 @@ export default function Home() {
           <>
             <section className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700">
               <h2 className="text-sm font-bold text-gray-400 mb-3 flex items-center gap-2">
-                {/* 👇 [수정] 선택된 전략 이름 표시 */}
-                <span>📊</span> {activeStrategy === 'bb' ? '볼린저 밴드' : '매물대'} 전략 기본 통계 <span className="text-xs font-normal">(시드 무관 단순 합산)</span>
+                <span>📊</span> 전략 기본 통계 <span className="text-xs font-normal">(시드 무관 단순 합산)</span>
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-gray-900/50 p-3 rounded-xl border border-gray-700/50">
@@ -512,10 +482,7 @@ export default function Home() {
                         <div className="text-sm font-bold text-yellow-400">{item.current_price.toLocaleString()}원</div>
                       </div>
                       <div className="text-xs text-gray-400 bg-yellow-900/20 p-2 rounded border border-yellow-900/50">
-                        {/* 👇 [수정] 대기 종목 안내 문구를 전략에 따라 다르게 표시 */}
-                        {activeStrategy === 'bb' 
-                          ? "🔥 하단 1.5% 이내 & 기대수익 3% 이상 도달!" 
-                          : "🧱 매물대 돌파/지지 타점 근접!"}
+                        🔥 하단 1.5% 이내 & 기대수익 3% 이상 도달!
                       </div>
                     </div>
                   ))}
@@ -523,6 +490,7 @@ export default function Home() {
               )}
             </section>
 
+            {/* 👇 [추가] 모든 종목 누적 수익률 카드 그리드 */}
             <section>
               <h2 className="text-lg md:text-xl font-bold text-white mb-3 flex items-center gap-2 border-b border-gray-700 pb-2 mt-8">
                 <span className="text-purple-400">🏆 모든 종목 누적 수익률</span>
